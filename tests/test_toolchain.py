@@ -246,5 +246,8 @@ def test_runner_puts_the_project_environment_first_so_bare_pytest_finds_the_proj
     argv = r.build(prof, str(ws), "/home/someone", {"PATH": "/usr/bin:/bin"}, "/usr/bin/bwrap")
     assert argv[argv.index("PATH") + 1].split(":")[0] == f"{ws}/proj-venv/bin"
     assert argv[argv.index("PYTHONPATH") + 1] == str(ws / "proj")
-    none = r.build(prof, str(tmp_path), "/home/someone", {"PATH": "/usr/bin"}, "/usr/bin/bwrap")
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    prof2 = ["--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp", "--bind", str(bare), str(bare), "--", "bash", "-c", "true"]  # noqa: S108
+    none = r.build(prof2, str(bare), "/home/someone", {"PATH": "/usr/bin"}, "/usr/bin/bwrap")
     assert "PYTHONPATH" not in none
