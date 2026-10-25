@@ -69,12 +69,30 @@ in plain text with no blocks. After your calls, the results come back and you
 are asked again."""
 
 _SENTENCE = re.compile(r"(?<=[.!?])\s")
+TOOL_DESC_CAP = 400      # chars of description per tool
+PARAM_DESC_CAP = 130     # chars of description per argument
+# dsh's sandbox-escalation retry arguments: optional, and a web model never needs them
+SKIP_ARGS = {"sandbox_permissions", "justification"}
 
 
 def _short(text: str, cap: int) -> str:
     text = " ".join((text or "").split())
     first = _SENTENCE.split(text, 1)[0]
     out = first if len(first) <= cap else first[: cap - 1] + "…"
+    return out
+
+
+def _brief(text: str, cap: int) -> str:
+    """Whole sentences, in order, while they fit in `cap` chars; the first is always kept
+    (clipped with an ellipsis if it alone is too long). Keeps the rules that matter
+    ("old_string must appear exactly once", "output is truncated to its tail") in the prompt."""
+    text = " ".join((text or "").split())
+    out = ""
+    for s in _SENTENCE.split(text):
+        cand = f"{out} {s}" if out else s
+        if len(cand) > cap:
+            return out or (s[: cap - 1] + "…")
+        out = cand
     return out
 
 
@@ -95,10 +113,12 @@ def render_tool(tool: dict) -> str:
     fn = tool.get("function", tool)
     params = fn.get("parameters") or {}
     required = set(params.get("required") or [])
-    lines = [f"- {fn['name']}: {_short(fn.get('description', ''), 240)}"]
+    lines = [f"- {fn['name']}: {_brief(fn.get('description', ''), TOOL_DESC_CAP)}"]
     for name, schema in (params.get("properties") or {}).items():
+        if name in SKIP_ARGS and name not in required:
+            continue
         req = "required" if name in required else "optional"
-        desc = _short(schema.get("description", ""), 110) if isinstance(schema, dict) else ""
+        desc = _brief(schema.get("description", ""), PARAM_DESC_CAP) if isinstance(schema, dict) else ""
         lines.append(f"    {name} ({_type_of(schema)}, {req})" + (f": {desc}" if desc else ""))
     return "\n".join(lines)
 
