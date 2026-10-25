@@ -817,3 +817,9 @@ def test_flat_arguments_beside_the_name_are_a_call():
     blk = '{"name": "bash", "command": "ls"}'
     _, calls = shim.parse_reply("```tool_call\n" + blk + "\n```", [blk], TOOLS_S)
     assert [(c["function"]["name"], json.loads(c["function"]["arguments"])) for c in calls] == [("bash", {"command": "ls"})]
+
+
+def test_raw_newlines_inside_json_strings_still_parse():
+    blk = '{"name": "bash", "arguments": {"command": "echo a\nb"}}'          # a real newline inside the string
+    _, calls = shim.parse_reply("```tool_call\n" + blk + "\n```", [blk], TOOLS_S)
+    assert [json.loads(c["function"]["arguments"])["command"] for c in calls] == ["echo a\nb"]

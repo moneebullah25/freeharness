@@ -298,7 +298,7 @@ def _json_objects(text: str):
                 depth -= 1
                 if depth == 0:
                     try:
-                        yield json.loads(text[i:j + 1]), j + 1
+                        yield json.loads(text[i:j + 1], strict=False), j + 1   # raw newlines inside strings are common
                     except json.JSONDecodeError:
                         pass
                     i = j + 1
