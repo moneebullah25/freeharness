@@ -828,3 +828,12 @@ def test_raw_newlines_inside_json_strings_still_parse():
 def test_code_fingerprint_is_stable_and_changes_with_the_source(tmp_path, monkeypatch):
     a = shim.code_fingerprint()
     assert a == shim.code_fingerprint() and len(a) == 16
+
+
+def test_a_second_name_key_is_the_argument_not_the_tool():
+    tools = TOOLS_S + [{"type": "function", "function": {"name": "mcp__gh__gh_branch", "description": "b",
+                        "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "repo_dir": {"type": "string"}}}}}]
+    blk = '{"name": "mcp__gh__gh_branch", "name": "fix/1-x", "repo_dir": "piccolo"}'
+    _, calls = shim.parse_reply("```tool_call\n" + blk + "\n```", [blk], tools)
+    assert [(c["function"]["name"], json.loads(c["function"]["arguments"])) for c in calls] == [
+        ("mcp__gh__gh_branch", {"repo_dir": "piccolo", "name": "fix/1-x"})]

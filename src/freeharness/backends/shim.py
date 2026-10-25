@@ -276,6 +276,18 @@ def tool_names(messages: list[dict]) -> dict:
 
 # -------------------------------------------------------------------- parsing
 
+def _pairs(pairs):
+    """object_pairs_hook: a repeated key keeps its FIRST value; later ones are kept as "_dup_<key>". Models that
+    write call arguments beside the tool name collide on "name" (the tool, then a branch/skill name)."""
+    out = {}
+    for k, v in pairs:
+        if k in out:
+            out["_dup_" + k] = v
+        else:
+            out[k] = v
+    return out
+
+
 def _json_objects(text: str):
     """Yield every balanced top-level {...} in text that parses as JSON."""
     i = 0
@@ -299,7 +311,7 @@ def _json_objects(text: str):
                 depth -= 1
                 if depth == 0:
                     try:
-                        yield json.loads(text[i:j + 1], strict=False), j + 1   # raw newlines inside strings are common
+                        yield json.loads(text[i:j + 1], strict=False, object_pairs_hook=_pairs), j + 1   # raw newlines inside strings are common
                     except json.JSONDecodeError:
                         pass
                     i = j + 1
@@ -321,6 +333,8 @@ def _as_call(obj, names: dict):
         # {"name": "bash"} alone is a mention (a list of tools), never a call with empty arguments; but
         # {"name": "gh_clone", "repo": "x"} is a call whose arguments sit beside the name (a common slip).
         args = {k: v for k, v in obj.items() if k not in ("name", "type", "id")}
+        for k in [k for k in args if k.startswith("_dup_")]:        # the colliding second "name", "id", ...
+            args[k[5:]] = args.pop(k)
         if not args:
             return None
     if isinstance(args, str):
