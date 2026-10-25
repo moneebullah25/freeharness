@@ -346,6 +346,15 @@ def parse_reply(text: str, code_blocks: list[str], tools: list[dict] | None):
             c = _as_call(obj, names)
             if c:
                 calls.append(c)
+    if not calls:
+        # A fenced block in the exact call shape that names a tool we do not have (a model calling a
+        # SKILL name as a tool, say) is a failed attempt, not prose: hand it to dsh, whose "Unknown
+        # tool" error result lets the model correct itself instead of the turn ending silently.
+        for block in code_blocks:
+            for obj, _ in _json_objects(block):
+                if (isinstance(obj, dict) and isinstance(obj.get("name"), str) and obj["name"].strip()
+                        and isinstance(obj.get("arguments"), dict) and set(obj) <= {"name", "arguments"}):
+                    calls.append((obj["name"].strip(), obj["arguments"]))
     seen, unique = set(), []
     for n, a in calls:                   # the same call shown twice is ONE call
         k = (n, json.dumps(a, sort_keys=True))

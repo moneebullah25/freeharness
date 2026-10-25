@@ -408,6 +408,16 @@ def test_sticky_continues_on_the_provider_that_took_over():
     print("  sticky: takeover continues ok")
 
 
+def test_unknown_tool_in_a_fenced_call_is_forwarded_for_dsh_to_reject():
+    blk = '{"name": "agency-backend-architect", "arguments": {"name": "x"}}'
+    _, calls = shim.parse_reply("```tool_call\n" + blk + "\n```", [blk], TOOLS_S)
+    assert [c["function"]["name"] for c in calls] == ["agency-backend-architect"]
+    _, calls = shim.parse_reply("Here is JSON: " + blk, [], TOOLS_S)          # prose, no fence: still not a call
+    assert calls == []
+    _, calls = shim.parse_reply("x", ['{"name": "foo", "arguments": {}, "extra": 1}'], TOOLS_S)
+    assert calls == []
+
+
 def test_fault_spec_parsing():
     assert shim.parse_fault("gemini:3, qwen:1") == {"gemini": 3, "qwen": 1}
     assert shim.parse_fault("junk,x:y") == {} and shim.parse_fault(None) == {}
