@@ -394,7 +394,7 @@ def test_setup_env_builds_a_working_venv_through_the_install_sandbox(w, wheelhou
     assert r.returncode == 0, r.stderr
     assert "main of __main__" in r.stdout and "42 1" in r.stdout, "project deps, the standard toolchain (via .pth) and the clone on PYTHONPATH"
     r2 = security._run_confined("command -v python python3; python --version", w.ws)
-    assert r2.returncode == 0 and str(toolvenv / "bin") in r2.stdout, "the sandbox has `python` from the toolchain"
+    assert r2.returncode == 0 and f"{venv}/bin/python" in r2.stdout, "bare `python` is the project environment's (it inherits the toolchain via .pth)"
     # the second call changes nothing
     stamp = (venv / ".fh-requirements.txt").stat().st_mtime_ns
     assert "unchanged, reused" in gate.gh_setup_env(str(clone), "")
