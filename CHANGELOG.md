@@ -8,6 +8,14 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Added
+- OSS-contribution evaluation: `freeharness oss run <owner/repo> [--component NAME] [--models a,b] [--live] [--max-steps N]`,
+  `oss report <run-id> [--judge]`, `oss list`, and `freeharness eval --suite oss` (lists it, never runs it). One run directory
+  `<state>/oss/<run-id>/` (prompt, config, clone workspace, the gate's evidence and drafts, transcript, `calls.jsonl`, live
+  `supervisor.jsonl`, `reviews.jsonl`, `run.json`, `report.md`); the gate overlay is passed to that run's runtime only. Dry-run is
+  the default and needs no terminal (new `freeharness.mcp.ossgate`: the normal gate plus placeholder issue numbers so a dry-run PR
+  can be validated); `--live` needs a terminal and y/N. `eval/oss_judge.py` is a deterministic 16-item checklist (pass/fail/na with
+  evidence) over the gate's own files, the tool-call record and read-only git; overall status via `review.final_assessment`.
+  docs/OSS_EVAL.md, tests/test_oss_eval.py, tests/test_oss_eval_dsh.py.
 - `freeharness agents install [--set oss|all] [--ref SHA] | list | remove`: installs open-source Agency agent skills
   (msitarzewski/agency-agents, MIT) into the dsh home by running its own `convert.sh`/`install.sh --tool dsh` from a fresh clone
   pinned to a full commit SHA (HEAD verified, scripts checksummed, scrubbed environment, `--path` forced). Default set `oss` is 9

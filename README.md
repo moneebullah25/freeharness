@@ -61,6 +61,11 @@ scratchpad and typed saved facts (`freeharness memory ...`, `/remember`) are rec
 to the dsh home (`--set all` is refused without `--yes`: skill descriptions are re-sent every step). See
 [docs/AGENTS_SKILLS.md](docs/AGENTS_SKILLS.md).
 
+`freeharness oss run <owner/repo>` is the OSS-contribution evaluation: the agent finds one real bug in one component, proves it is not
+filed yet, drafts the issue, fixes it on a branch and drafts the PR, all through the GitHub gate. Dry-run by default (nothing is posted);
+`--live` needs a terminal and your approval of each post. `freeharness oss report <run-id>` prints the timeline and a deterministic
+checklist. See [docs/OSS_EVAL.md](docs/OSS_EVAL.md).
+
 ## Providers
 A site joins the rotation only if it passes the tool-use eval (`freeharness eval --model <name>`): 8 coding tasks
 judged on the resulting files, never on what the model says. **Today Gemini (8/8) and Qwen (8/8) are eligible and make up the default rotation**; Perplexity and Grok failed (0/8). Qwen needs
@@ -70,7 +75,7 @@ so each runs in its **own visible Chrome window** with its own profile: sign in 
 when the site is first used. Evidence: [docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ## Other commands
-`freeharness setup | login [site…] [--check] | doctor [--report] | vault <path> | memory … | sessions | transcript [id] | serve | eval | version`
+`freeharness setup | login [site…] [--check] | doctor [--report] | vault <path> | memory … | sessions | transcript [id] | agents … | oss run|report|list | serve | eval | version`
 
 ## Where things live
 Per-user directories, owner-only; `FREEHARNESS_HOME=/dir` puts everything under one root. See [docs/PRIVACY.md](docs/PRIVACY.md).

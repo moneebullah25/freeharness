@@ -14,6 +14,7 @@ freeharness: a terminal coding agent (DeepSeek Harness) on free web-chat backend
     freeharness sessions [--all]     list sessions (title, age)
     freeharness memory ...           long-term memory: list | add | search | forget | extract | export | wipe
     freeharness agents ...           open-source agent skills: install [--set oss|all] | list | remove
+    freeharness oss run|report|list  OSS-contribution evaluation on a real repo (dry-run by default; --live posts after you approve)
     freeharness version
 """
 from __future__ import annotations
@@ -22,7 +23,7 @@ import sys
 
 from . import __version__
 
-SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "review", "vault", "github", "transcript", "memory", "sessions", "agents", "version")
+SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "review", "vault", "github", "transcript", "memory", "sessions", "agents", "oss", "version")
 
 
 def main(argv=None) -> int:
@@ -49,6 +50,9 @@ def main(argv=None) -> int:
         return run(rest)
     if cmd == "agents":
         from .agents_cmd import main as run
+        return run(rest)
+    if cmd == "oss":
+        from .oss_cmd import main as run
         return run(rest)
     if cmd == "vault":
         from .vault_cmd import main as run

@@ -165,9 +165,10 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", default="gemini", help="auto | gemini | perplexity | qwen | grok")
     ap.add_argument("--sticky", action="store_true", help="run with a sticky chat for the model under test")
-    ap.add_argument("--suite", choices=sorted(SUITES), default="core",
+    ap.add_argument("--suite", choices=sorted(SUITES) + ["oss"], default="core",
                     help="core = the original 8 tasks (default; the rotation bar); full = core + bash exploration, "
-                         "multi-file refactor, skill, vault MCP and resume-then-continue")
+                         "multi-file refactor, skill, vault MCP and resume-then-continue; oss = only LISTS the "
+                         "OSS-contribution evaluation (run it with `freeharness oss run`; it never runs live from here)")
     ap.add_argument("--tasks", help="comma-separated task ids (overrides --suite)")
     ap.add_argument("--repeat", type=int, default=1)
     ap.add_argument("--keep", action="store_true", help="keep workspaces for inspection")
@@ -178,6 +179,10 @@ def main(argv=None) -> int:
     if args.list:
         for t in SUITES["full"]:
             print(f"{t.id:20} {'core' if t in SUITES['core'] else 'full':5}{t.prompt[:84]}")
+        return 0
+    if args.suite == "oss" and not args.tasks:
+        from .oss_judge import suite_listing
+        print(suite_listing())
         return 0
     ids = args.tasks.split(",") if args.tasks else [t.id for t in SUITES[args.suite]]
     unknown = [i for i in ids if i not in BY_ID]
