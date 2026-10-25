@@ -55,6 +55,7 @@ class Provider:
     size_errors: tuple = ()         # generic-looking site errors known to mean "prompt too big" for this
                                     # site (a measured one); treated like a length signal
     consent: tuple = ()             # buttons to click away after load (best effort)
+    login_url: tuple = ()           # URL fragments of the site's sign-in page: landing there means the session is logged out
     challenge_url: tuple = ()       # URL fragments of the site's human-verification page; seeing one
                                     # means "stop and cool down", never "keep waiting"
     channel: str = ""               # "chrome": drive installed Chrome (needed for a profile that `freeharness
@@ -239,6 +240,7 @@ def resolve(spec: str, headed: bool = False) -> list[str]:
 DEEPSEEK = Provider(
     key="deepseek", label="DeepSeek", url="https://chat.deepseek.com/",
     headless_ok=False, channel="chrome",
+    login_url=("/sign_in", "/login"),
     reply_timeout=120, answer_timeout=180,
     errors=("server is busy", "too many requests", "rate limit", "try again later",
             "something went wrong", "message limit"),

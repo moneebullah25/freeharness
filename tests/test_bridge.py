@@ -361,3 +361,18 @@ if __name__ == "__main__":
     test_code_blocks_from_clipboard_markdown()
     test_verification_page_is_detected_by_url_not_waited_on()
     print("all passed")
+
+
+def test_landing_on_the_sign_in_page_is_a_login_error_not_a_changed_ui():
+    from freeharness.backends import bridge, providers, shim
+
+    class P:
+        url = "https://chat.deepseek.com/sign_in"
+
+    s = bridge.Session.__new__(bridge.Session)
+    s.p, s.page = providers.PROVIDERS["deepseek"], P()
+    with pytest.raises(RuntimeError) as e:
+        s._raise_if_logged_out()
+    assert shim.classify(e.value) == "login" and "freeharness login deepseek" in str(e.value)
+    s.page.url = "https://chat.deepseek.com/a/chat/s/1"
+    s._raise_if_logged_out()                                   # a normal chat page: nothing raised

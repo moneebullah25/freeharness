@@ -466,10 +466,21 @@ class Session:
         try:
             return _first(self.page, "input", timeout=COMPOSER_MS, sel=self.p.sel)
         except LookupError:
+            self._raise_if_logged_out()
             self.page.reload()
             self.page.wait_for_timeout(SPA_PAINT)
             self._dismiss_consent()
-            return _first(self.page, "input", timeout=COMPOSER_MS, sel=self.p.sel)
+            try:
+                return _first(self.page, "input", timeout=COMPOSER_MS, sel=self.p.sel)
+            except LookupError:
+                self._raise_if_logged_out()
+                raise
+
+    def _raise_if_logged_out(self):
+        """Landing on the site's sign-in page is a LOGIN problem (re-run `freeharness login <site>`), not a changed UI."""
+        if any(m in self.page.url for m in self.p.login_url):
+            raise RuntimeError(f"{self.p.label} is signed out (the page is {self.page.url}): please log in "
+                               f"again with `freeharness login {self.p.key}`")
 
     def _dismiss_consent(self):
         """Click away cookie/terms dialogs. Best effort: a miss is not an error,
