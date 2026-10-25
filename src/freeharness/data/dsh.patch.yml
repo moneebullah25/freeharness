@@ -76,3 +76,18 @@
 - id: tool-fs
   config:
     readImage: false
+
+# --- trust model: no human is ever on the other end of the SDK channel, so nothing
+# may wait for one. Approval is `never` (a request that needs approval is refused at
+# once and the model is told not to ask), while the sandbox stays workspace-write:
+# bash runs in the OS sandbox and write/edit are fenced to the workspace + temp dirs.
+# The `permission` row re-pins sessions to the preset's own approval, so both rows move.
+- id: approval
+  config:
+    policy: never
+- id: permission
+  config:
+    presets:
+      workspace-write:
+        sandbox: workspace-write
+        approval: never

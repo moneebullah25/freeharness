@@ -9,7 +9,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 LOG = Path(os.environ.get("FAKE_OPENAI_LOG", tempfile.gettempdir())) / "freeharness-fake-requests.jsonl"
-PORT = int(os.environ.get("FAKE_OPENAI_PORT", "8766"))
+PORT = int(os.environ.get("FAKE_PORT") or os.environ.get("FAKE_OPENAI_PORT") or "8766")
+# FAKE_SCRIPT is either a path to a JSON file (steps picked by how many assistant messages the
+# history holds, so a script survives runtime restarts) or an inline JSON list (steps picked by
+# request count, the last repeats; {"sleep": 5, "then": {...}} delays a reply):
+#   {"text": "..."} | {"tool": "bash", "args": {...}}
+_RAW = os.environ.get("FAKE_SCRIPT", "")
+SCRIPT = json.loads(_RAW) if _RAW.lstrip().startswith("[") else None
+_N = [0]
 
 
 class H(BaseHTTPRequestHandler):
@@ -53,6 +60,23 @@ class H(BaseHTTPRequestHandler):
 
         chunk({"role": "assistant", "content": ""})
         msgs = body.get("messages", [])
+        if SCRIPT is not None:
+            step = SCRIPT[min(_N[0], len(SCRIPT) - 1)]
+            _N[0] += 1
+            if step.get("sleep"):
+                time.sleep(step["sleep"])
+                step = step.get("then", {"text": "late"})
+            if "tool" in step:
+                chunk({"tool_calls": [{"index": 0, "id": f"call_{_N[0]}", "type": "function",
+                                       "function": {"name": step["tool"], "arguments": json.dumps(step.get("args", {}))}}]})
+                chunk({}, "tool_calls")
+            else:
+                chunk({"content": step.get("text", "ok")})
+                chunk({}, "stop")
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+            self.close_connection = True
+            return
         got_tool = any(m["role"] == "tool" for m in msgs)
         script = os.environ.get("FAKE_SCRIPT")
         if script and Path(script).exists():

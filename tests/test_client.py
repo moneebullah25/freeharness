@@ -3,7 +3,7 @@
 OpenAI-compatible server (spike/fake_openai.py) stands in for the shim, so this
 exercises the real dsh runtime, the JSON-RPC wrapper, the renderer and the CLI.
 
-Run: .venv/bin/python tests/test_client.py        (port 8766 must be free)
+Run: .venv/bin/python tests/test_client.py        (uses a private free port, so a live shim on 8766 is left alone)
 """
 import io
 import json
@@ -20,33 +20,59 @@ HERE = Path(__file__).resolve().parent
 
 from rich.console import Console  # noqa: E402
 
-from freeharness.client import render  # noqa: E402
-from freeharness.client.rpc import Runtime, RuntimeDied, shim_health  # noqa: E402
+from freeharness.client import render, rpc  # noqa: E402
+from freeharness.client.rpc import Runtime, RuntimeDied  # noqa: E402
 
 FIXTURE = HERE / "fixtures" / "read_turn.json"
 
 
 class Stub:
+    """fake_openai on a free port. `Stub.cur` is the active one: mk_runtime/cli_env point dsh at it."""
+    cur = None
+
     def __init__(self, delay=0):
         self.delay = delay
 
     def __enter__(self):
-        assert not shim_health(0.5), "port 8766 is in use (a shim is running?) -- stop it first"
-        env = dict(os.environ, STUB_DELAY=str(self.delay))
+        import socket
+        import tempfile as _t
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            self.port = s.getsockname()[1]
+        self.tmp = Path(_t.mkdtemp(prefix="fh-stub-"))
+        self.patch = self.tmp / "dsh.patch.yml"
+        self.patch.write_text(rpc.PATCH.read_text().replace("127.0.0.1:8766", f"127.0.0.1:{self.port}"))
+        env = dict(os.environ, STUB_DELAY=str(self.delay), FAKE_PORT=str(self.port), FAKE_OPENAI_LOG=str(self.tmp))
         self.p = subprocess.Popen([sys.executable, str(HERE / "fake_openai.py")],
                                   env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(40):
             try:
                 import urllib.request
-                urllib.request.urlopen("http://127.0.0.1:8766/v1/models", timeout=1).read()
+                urllib.request.urlopen(f"http://127.0.0.1:{self.port}/v1/models", timeout=1).read()
+                Stub.cur = self
                 return self
             except OSError:
                 time.sleep(0.1)
         raise RuntimeError("stub did not start")
 
     def __exit__(self, *a):
+        Stub.cur = None
         self.p.terminate()
         self.p.wait(5)
+
+    def cli_env(self):
+        """A relocated FREEHARNESS_HOME reusing the real harness, whose overlay points dsh at this stub."""
+        home = self.tmp / "fh-home"
+        (home / "data").mkdir(parents=True, exist_ok=True)
+        if not (home / "data" / "harness").exists():
+            (home / "data" / "harness").symlink_to(rpc.paths.harness_dir())
+        (home / "config" / "overlay.d").mkdir(parents=True, exist_ok=True)
+        (home / "config" / "overlay.d" / "stub.yml").write_text(self.patch.read_text())
+        return dict(os.environ, FREEHARNESS_HOME=str(home))
+
+
+def mk_runtime(ws):
+    return Runtime(ws, patch=Stub.cur.patch)
 
 
 def sid(tag="t"):
@@ -99,7 +125,7 @@ def ensure_fixture():
     if FIXTURE.exists():
         return
     with Stub():
-        rt = Runtime(workspace())
+        rt = mk_runtime(workspace())
         try:
             rt.start()
             FIXTURE.parent.mkdir(parents=True, exist_ok=True)
@@ -137,7 +163,7 @@ def test_markup_in_output_cannot_break_the_renderer():
 def test_run_turn_against_real_dsh():
     ws = workspace()
     with Stub():
-        rt = Runtime(ws)
+        rt = mk_runtime(ws)
         try:
             rt.start()
             seen = []
@@ -156,7 +182,7 @@ def test_run_turn_against_real_dsh():
 def test_workspace_with_spaces_and_non_ascii_characters():
     ws = workspace("wörk dir 日本 ünï-")
     with Stub():
-        rt = Runtime(ws)
+        rt = mk_runtime(ws)
         try:
             rt.start()
             r = rt.run_turn(sid(), "read hello.txt")
@@ -169,7 +195,7 @@ def test_workspace_with_spaces_and_non_ascii_characters():
 def test_two_turns_share_a_session_and_other_sessions_are_ignored():
     ws = workspace()
     with Stub():
-        rt = Runtime(ws)
+        rt = mk_runtime(ws)
         try:
             rt.start()
             a = rt.run_turn(sid("a"), "read hello.txt")
@@ -186,7 +212,7 @@ def test_interrupt_then_resume_repairs_the_session():
     the interrupt, so prove the session is usable afterwards."""
     ws = workspace()
     with Stub(delay=4):
-        rt = Runtime(ws)
+        rt = mk_runtime(ws)
         try:
             rt.start()
             sess = sid("int")
@@ -211,7 +237,7 @@ def test_cli_one_shot():
     ws = workspace()
     with Stub():
         p = subprocess.run([sys.executable, "-m", "freeharness", "--no-shim", "--cwd", str(ws), "-p", "read hello.txt"],
-                           capture_output=True, text=True, timeout=120)
+                           capture_output=True, text=True, timeout=120, env=Stub.cur.cli_env())
     assert p.returncode == 0, (p.returncode, p.stdout[-300:], p.stderr[-300:])
     assert "● read  hello.txt" in p.stdout and "done" in p.stdout, p.stdout
     print("  cli -p .............. ok")
@@ -222,7 +248,7 @@ def test_cli_repl_commands():
     with Stub():
         p = subprocess.run([sys.executable, "-m", "freeharness", "--no-shim", "--cwd", str(ws)],
                            input="/help\n/status\n/model gemini\n/model nope\n/bogus\nread hello.txt\n/quit\n",
-                           capture_output=True, text=True, timeout=180)
+                           capture_output=True, text=True, timeout=180, env=Stub.cur.cli_env())
     out = p.stdout
     assert p.returncode == 0, (p.returncode, out[-400:], p.stderr[-400:])
     for want in ("/providers", "session", "model: gemini", "unknown model", "unknown command /bogus",

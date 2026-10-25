@@ -104,7 +104,8 @@ class App:
                 status.update(f"{label['text']}  [dim]{elapsed:.0f}s[/]")
 
             try:
-                result = self.rt.run_turn(self.sid, text, on_event=on_event, on_tick=on_tick)
+                result = self.rt.run_turn(self.sid, text, on_event=on_event, on_tick=on_tick,
+                                          timeout=self.args.turn_timeout, max_steps=self.args.max_steps)
             except KeyboardInterrupt:
                 status.stop()
                 self.c.print("[yellow]interrupted[/] – restarting the runtime and resuming the session…")
@@ -126,8 +127,7 @@ class App:
 
     def recover(self):
         try:
-            self.rt.restart()
-            self.rt.resume(self.sid)
+            self.rt.abandon(self.sid)
         except Exception as e:                  # noqa: BLE001
             self.c.print(f"[red]could not recover:[/] {e}\nStart a new session with /new.")
 
@@ -222,6 +222,10 @@ def main(argv=None) -> int:
     ap.add_argument("--sticky", default="auto",
                     help="providers that keep ONE chat per task and send only what is new: 'auto' (those verified by the eval: "
                          "gemini), 'all', 'none', or a comma-separated list (default: auto)")
+    ap.add_argument("--max-steps", type=int, default=60, metavar="N",
+                    help="abandon a turn that starts more than N model steps; 0 = no limit (default: %(default)s)")
+    ap.add_argument("--turn-timeout", type=float, default=900.0, metavar="S",
+                    help="abandon a turn that runs longer than S seconds (default: %(default)s)")
     ap.add_argument("--no-shim", action="store_true", help="do not start or check the shim")
     ap.add_argument("--resume", metavar="ID", help="resume a saved session")
     args = ap.parse_args(argv)
@@ -230,7 +234,7 @@ def main(argv=None) -> int:
     app = App(args, console)
     try:
         app.start()
-        if args.prompt:
+        if args.prompt:                      # exit 0 turn completed, 1 turn failed/abandoned, 2 could not run
             return 0 if app.turn(args.prompt) else 1
         app.repl()
         return 0
