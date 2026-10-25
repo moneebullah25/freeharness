@@ -33,6 +33,31 @@ def _download(url: str, dest: Path):
         shutil.copyfileobj(r, f)
 
 
+def _safe_extract(tar: tarfile.TarFile, dest: Path):
+    """Extract only if every member stays inside `dest`.
+
+    `extractall(filter="data")` does this but exists only in Python >= 3.12 and in 3.10.12 / 3.11.4+
+    backports (CI caught it failing on an older 3.10), so the checks are done here on every version.
+    Refused: absolute paths, `..` escapes, links that point outside, device/fifo members.
+    """
+    root = dest.resolve()
+    for m in tar.getmembers():
+        target = (root / m.name).resolve()
+        if root != target and root not in target.parents:
+            raise RuntimeError(f"unsafe path in archive: {m.name!r}")
+        if m.isdev() or m.isfifo():
+            raise RuntimeError(f"unsafe member type in archive: {m.name!r}")
+        if m.issym() or m.islnk():
+            base = target.parent if m.issym() else root
+            link = (base / m.linkname).resolve()
+            if root != link and root not in link.parents:
+                raise RuntimeError(f"link escapes the archive: {m.name!r} -> {m.linkname!r}")
+    if hasattr(tarfile, "data_filter"):
+        tar.extractall(dest, filter="data")     # defence in depth where available
+    else:
+        tar.extractall(dest)                    # noqa: S202 (members validated above)
+
+
 def install_node(say=print) -> Path:
     osname, arch = _OS.get(platform.system()), _ARCH.get(platform.machine().lower())
     if not osname or not arch:
@@ -53,7 +78,7 @@ def install_node(say=print) -> Path:
         say("checksum ok")
         shutil.rmtree(dest, ignore_errors=True)
         with tarfile.open(tarball) as t:
-            t.extractall(tmp, filter="data")          # refuses absolute paths, links outside, etc.
+            _safe_extract(t, Path(tmp))
             shutil.move(str(Path(tmp) / name[:-len(".tar.xz")]), dest)
     return dest / "bin"
 

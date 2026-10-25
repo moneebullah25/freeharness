@@ -56,6 +56,47 @@ def test_node_install_rejects_path_traversal_members(monkeypatch, tmp_path):
     assert not (tmp_path / "escape.txt").exists()
 
 
+def test_safe_extract_rejects_escaping_links_and_devices_on_every_python(tmp_path):
+    for kind in ("symlink", "hardlink", "device", "absolute"):
+        arc = tmp_path / f"{kind}.tar"
+        with tarfile.open(arc, "w") as t:
+            ti = tarfile.TarInfo("top/evil")
+            if kind == "symlink":
+                ti.type, ti.linkname = tarfile.SYMTYPE, "../../outside"
+            elif kind == "hardlink":
+                ti.type, ti.linkname = tarfile.LNKTYPE, "../../etc/passwd"
+            elif kind == "device":
+                ti.type = tarfile.CHRTYPE
+            else:
+                ti = tarfile.TarInfo("/nonexistent-root/abs-evil")
+            t.addfile(ti)
+        out = tmp_path / f"out-{kind}"
+        out.mkdir()
+        with tarfile.open(arc) as t, pytest.raises(RuntimeError, match="unsafe|escapes"):
+            setup_cmd._safe_extract(t, out)
+        assert not any(out.iterdir()), f"{kind}: nothing may be extracted"
+
+
+def test_safe_extract_works_without_the_data_filter(tmp_path, monkeypatch):
+    """Simulates an older Python 3.10 whose tarfile has no `filter=` support (the CI failure)."""
+    monkeypatch.delattr(tarfile, "data_filter", raising=False)
+    real = tarfile.TarFile.extractall
+
+    def old_extractall(self, path=".", members=None, *, numeric_owner=False, **kw):
+        if "filter" in kw:
+            raise TypeError("TarFile.extractall() got an unexpected keyword argument 'filter'")
+        return real(self, path, members, numeric_owner=numeric_owner)
+
+    monkeypatch.setattr(tarfile.TarFile, "extractall", old_extractall)
+    arc = tmp_path / "ok.tar.xz"
+    _tarball(arc, "node-v1-x.tar.xz")
+    out = tmp_path / "out"
+    out.mkdir()
+    with tarfile.open(arc) as t:
+        setup_cmd._safe_extract(t, out)
+    assert (out / "node-v1-x" / "bin" / "node").is_file()
+
+
 def test_doctor_runs_and_reports_are_safe_to_share(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("FREEHARNESS_HOME", str(tmp_path))
     rc = doctor.main(["--report"])
