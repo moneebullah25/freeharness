@@ -63,3 +63,16 @@
   disabled: true
 - id: plan-mode
   disabled: true
+
+# --- tool configuration (verified by tests/test_tools.py)
+# Background jobs need job_output/job_kill, which live in tool-jobs (disabled above): with
+# promote-on-timeout the model would be told to use tools it does not have and the process
+# would linger. Disable both so a timeout kills the command and returns an error result.
+- id: tool-bash
+  config:
+    enableRunInBackground: false
+    promoteOnTimeout: false
+# read_image is useless on a text-only web chat; dropping it saves a schema per step.
+- id: tool-fs
+  config:
+    readImage: false
