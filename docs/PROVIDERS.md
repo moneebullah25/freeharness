@@ -17,6 +17,27 @@ headless, on a free account.
 | HuggingChat | free account | not evaluated: free message quota already exhausted ("Upgrade Required") | Excluded |
 | Kimi, Z.ai, DeepSeek chat, Claude, Mistral, LMArena, You.com, DeepAI, Blackbox, Phind, Pi | n/a | not usable without payment, a CAPTCHA, or are blocked headless (2026-10-24) | Not registered |
 
+## How to read eval results
+`freeharness eval --model <name> [--suite core|full] [--tasks a,b] [--repeat N]`. Every task runs through the real stack (dsh tool loop ->
+shim -> web chat) in a fresh temp workspace and is judged by deterministic code on the resulting files or the captured tool calls, never on
+the model's claim of success.
+- **core** (default) is the original 8 tasks; the 75% bar and the "Eval" column above are measured on core only.
+- **full** adds 5 tasks: `explore-dir` (find/grep/wc over a generated tree), `refactor-3files` (rename across 3 files, judged by running an
+  untouched `check.py`), `skill-use` (a project skill in `.dsh/skills`; the `skill` tool call is required), `vault-mcp` (a temp vault;
+  `vault_search`/`vault_read` required, runs without your own overlay) and `resume-continue` (two turns, runtime restart + `session/resume`
+  between them, the second turn needs a fact from the first). Report full results separately; they do not change eligibility.
+- Result file `<state dir>/eval/<time>-<model>.json`: `suite`, `verdict`, and per task `ok`, `detail` (the reason), `steps`, `tools` (names in
+  order), `tool_counts`, `tool_calls`, `tool_errors`, `turns`, `turn_seconds`, `seconds`, `final` (the model's words, for reading only).
+- Verdict: `eligible` needs >= 75% of judged runs passed, no run that `answered_without_tools` (detail starts with "no tool use": the model
+  answered without touching the workspace) and nothing `inconclusive` (rate-limited after one retry; such runs are INFRA, not failures).
+- A high `tool_errors` or `steps` with a pass means the model got there the hard way; a pass with `final` contradicting the files is still a pass.
+
+### Advisory judge and human review
+`eval/judge.py` builds an evidence packet (changed files, tool calls with output, deterministic result) and asks a model for a 0-10 score with
+recorded reasoning; it is advisory and cannot change a result. `freeharness review <task> approve|reject|changes [--note ..]` records a human
+decision in `<state dir>/eval/reviews.json`. `review.final_assessment()` combines the three: a failed or missing deterministic check is always
+`failed`/`unverified`; a pass is `passed`, `needs_review` (judge < 5), `verified` (human approved), `needs_changes` or `rejected_by_human`.
+
 ## Using more than the eligible set
 `freeharness --providers all` (or `freeharness serve --providers all`) puts every registered site that can run into the rotation,
 eligible ones first: Gemini, Qwen, then Grok and Perplexity. The shim prints a warning for the ones that failed the eval. The cost is

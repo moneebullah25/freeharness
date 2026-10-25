@@ -8,19 +8,21 @@ Run: .venv/bin/python tests/test_eval.py
 
 
 from freeharness.eval import run as ev  # noqa: E402
-from freeharness.eval.tasks import BY_ID, TASKS  # noqa: E402
+from freeharness.eval.tasks import BY_ID, FULL_TASKS as TASKS  # noqa: E402
 from freeharness.client.rpc import TurnResult  # noqa: E402
 
 ANSWERS = {"read-answer": "The launch code is ORCHID-7731.", "count-todos": "3",
-           "run-and-report": "It printed 5050."}
+           "run-and-report": "It printed 5050.", "explore-dir": "beta 26"}
 TOOLS = {"read-answer": "read", "write-file": "write", "fix-bug": "edit", "edit-config": "edit",
          "count-todos": "grep", "rename-function": "edit", "run-and-report": "bash",
-         "write-and-run-test": "write"}
+         "write-and-run-test": "write", "explore-dir": "bash", "refactor-3files": "edit", "skill-use": "skill",
+         "vault-mcp": "vault_search", "resume-continue": "write"}
 
 
 def result(text="", tools=(), ok=True):
     return TurnResult(ok, {"kind": "completed" if ok else "error"}, text, 1,
-                      [(t, {}) for t in tools], 0, 1.0, [])
+                      [(t, {"command": "python3 -c 'print(sum(range(1,101)))'"} if t == "bash" else {}) for t in tools],
+                      0, 1.0, [])
 
 
 def fresh(task):
@@ -29,7 +31,7 @@ def fresh(task):
 
 def test_every_task_has_a_unique_id_and_prompt():
     ids = [t.id for t in TASKS]
-    assert len(ids) == len(set(ids)) == len(TASKS) >= 8
+    assert len(ids) == len(set(ids)) == len(TASKS) == 13
     assert all(t.prompt.strip() for t in TASKS)
     print("  task table .......... ok")
 
@@ -85,6 +87,30 @@ def test_partial_and_overbroad_edits_fail():
     t = BY_ID["count-todos"]
     assert not t.check(fresh(t), result("There are 3 or maybe 5 files."))[0], "hedged answers fail"
     print("  partial work fails .. ok")
+
+
+def test_new_task_judges_resist_shortcuts():
+    t = BY_ID["refactor-3files"]
+    ws = fresh(t)
+    (ws / "check.py").write_text('print("refactor ok")\n')                  # neuter the check script
+    assert not t.check(ws, result("", ["edit"]))[0]
+    ws = fresh(t)
+    t.solve(ws)
+    (ws / "pkg/rows.py").write_text((ws / "pkg/rows.py").read_text().replace("parse_rows", "parse_records"))
+    assert not t.check(ws, result("", ["edit"]))[0], "renaming the other function too must fail"
+    t = BY_ID["skill-use"]
+    ws = fresh(t)
+    t.solve(ws)
+    assert not t.check(ws, result("", ["bash"]))[0], "right file but no skill call must fail"
+    assert t.check(ws, result("", ["skill"]))[0]
+    t = BY_ID["explore-dir"]
+    assert not t.check(fresh(t), result("beta 33"))[0] and not t.check(fresh(t), result("alpha 26"))[0]
+    t = BY_ID["run-and-report"]
+    assert not ev.grade(t, fresh(t), TurnResult(True, {}, "5050", 1, [("bash", {"command": "echo 5050"})], 0, 1.0, []))[0], \
+        "echoing the number is not computing it"
+    t = BY_ID["vault-mcp"]
+    assert ev.tool_matches("mcp__vault__vault_search", "vault_search") and not ev.tool_matches("xvault_search", "vault_search")
+    print("  new judges .......... ok")
 
 
 def test_verdict_thresholds():

@@ -54,7 +54,24 @@ class H(BaseHTTPRequestHandler):
         chunk({"role": "assistant", "content": ""})
         msgs = body.get("messages", [])
         got_tool = any(m["role"] == "tool" for m in msgs)
-        if tools and "read" in tools and not got_tool:
+        script = os.environ.get("FAKE_SCRIPT")
+        if script and Path(script).exists():
+            # Scripted mode: the file is re-read per request, a JSON list of steps
+            # {"tool": name, "args": {...}} | {"text": "..."}. The step served is the
+            # number of assistant messages already in the history, so a script keeps
+            # its place across turns and across a runtime restart + session/resume.
+            steps = json.loads(Path(script).read_text())
+            idx = sum(1 for m in msgs if m["role"] == "assistant")
+            step = steps[idx] if idx < len(steps) else {"text": "done"}
+            real = next((t for t in tools if step.get("tool") and (t == step["tool"] or t.endswith("_" + step["tool"]))), None)
+            if step.get("tool") and real:
+                chunk({"tool_calls": [{"index": 0, "id": f"call_{idx}", "type": "function",
+                                       "function": {"name": real, "arguments": json.dumps(step.get("args", {}))}}]})
+                chunk({}, "tool_calls")
+            else:
+                chunk({"content": step.get("text") or f"(scripted tool {step.get('tool')} not offered: {tools})"})
+                chunk({}, "stop")
+        elif tools and "read" in tools and not got_tool:
             # split the arguments across chunks the way real servers do
             chunk({"tool_calls": [{"index": 0, "id": "call_1", "type": "function",
                                    "function": {"name": "read", "arguments": ""}}]})

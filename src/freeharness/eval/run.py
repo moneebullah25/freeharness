@@ -6,7 +6,8 @@ Tool-loop eval: can this provider drive a real agent loop?
     freeharness eval --list
 
 Each task runs in a fresh temp workspace through the full stack (dsh -> shim ->
-web chat). Outcomes are judged on the workspace, not the model's words. Results
+web chat). Outcomes are judged on the workspace, not the model's words. `--suite full` adds
+bash exploration, a multi-file refactor, the skill tool, the vault MCP and a resume-then-continue task. Results
 are saved as <state dir>/eval/<time>-<model>.json. This spends free-tier messages: ~40 for
 a full pass on one provider, so a provider that is cooling down will fail tasks.
 
@@ -26,7 +27,8 @@ from pathlib import Path
 from .. import paths
 from ..client.rpc import Runtime, ensure_shim, shim_health
 
-from .tasks import BY_ID, TASKS, Task
+from .tasks import BY_ID, SUITES, Task, tool_matches
+from ..client.rpc import TurnResult
 
 PASS_BAR = 0.75
 RATE_MARKERS = ("RATE_LIMIT", "cooling down", "rate_limit")
@@ -46,22 +48,45 @@ def grade(task: Task, ws: Path, res) -> tuple[bool, str]:
     """Pure: turn a finished turn + workspace into pass/fail with a reason."""
     if not res.ok:
         return False, f"turn ended {res.reason}"
-    if task.needs_tools and not any(c[0] in task.needs_tools for c in res.tool_calls):
+    if task.needs_tools and not any(tool_matches(c[0], n) for c in res.tool_calls for n in task.needs_tools):
         return False, f"no tool use (needed one of {list(task.needs_tools)})"
     return task.check(ws, res)
 
 
+def merge_turns(turns: list) -> TurnResult:
+    """One TurnResult over several turns of the same session (judges see the whole run)."""
+    last = turns[-1]
+    return TurnResult(all(t.ok for t in turns), last.reason, last.final_text,
+                      sum(t.steps for t in turns), [c for t in turns for c in t.tool_calls],
+                      sum(t.tool_errors for t in turns), sum(t.seconds for t in turns),
+                      [e for t in turns for e in t.events])
+
+
 def run_one(task: Task, model: str, keep: bool = False) -> dict:
     ws = materialize(task)
-    rt = Runtime(ws, model=model)
+    patches = task.setup(ws) if task.setup else None
+    # a task with its own runtime config runs hermetically: only that config, not the user's overlay.d
+    rt = Runtime(ws, model=model, overlay_files=patches)
     out = {"task": task.id, "model": model, "ok": False, "detail": "", "steps": 0,
            "tool_calls": 0, "tool_errors": 0, "seconds": 0.0, "error": None}
     t0 = time.monotonic()
     try:
         rt.start()
-        res = rt.run_turn(f"eval-{task.id}-{int(t0)}", task.prompt, timeout=task.timeout)
-        out.update(steps=res.steps, tool_calls=len(res.tool_calls), tool_errors=res.tool_errors,
-                   tools=[c[0] for c in res.tool_calls], final=res.final_text[:300])
+        sid = f"eval-{task.id}-{int(t0)}"
+        turns = []
+        for i, prompt in enumerate((task.prompt, *task.followups)):
+            if i and task.resume:                      # the interrupted-runtime path: restart, then session/resume
+                rt.restart()
+                rt.resume(sid)
+            turns.append(rt.run_turn(sid, prompt, timeout=task.timeout))
+            if not turns[-1].ok:
+                break
+        res = merge_turns(turns)
+        names = [c[0] for c in res.tool_calls]
+        out.update(steps=res.steps, tool_calls=len(names), tool_errors=res.tool_errors, tools=names,
+                   tool_counts={n: names.count(n) for n in sorted(set(names))},
+                   turns=len(turns), turn_seconds=[round(t.seconds, 1) for t in turns],
+                   final=res.final_text[:300])
         out["ok"], out["detail"] = grade(task, ws, res)
     except Exception as e:                       # noqa: BLE001 -- one bad task must not end the run
         out["error"] = f"{type(e).__name__}: {str(e)[:200]}"
@@ -69,6 +94,8 @@ def run_one(task: Task, model: str, keep: bool = False) -> dict:
     finally:
         rt.close()
         out["seconds"] = round(time.monotonic() - t0, 1)
+        for pth in patches or []:
+            shutil.rmtree(Path(pth).parent, ignore_errors=True)
         if not keep:
             shutil.rmtree(ws, ignore_errors=True)
         else:
@@ -138,7 +165,10 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", default="gemini", help="auto | gemini | perplexity | qwen | grok")
     ap.add_argument("--sticky", action="store_true", help="run with a sticky chat for the model under test")
-    ap.add_argument("--tasks", help="comma-separated task ids (default: all)")
+    ap.add_argument("--suite", choices=sorted(SUITES), default="core",
+                    help="core = the original 8 tasks (default; the rotation bar); full = core + bash exploration, "
+                         "multi-file refactor, skill, vault MCP and resume-then-continue")
+    ap.add_argument("--tasks", help="comma-separated task ids (overrides --suite)")
     ap.add_argument("--repeat", type=int, default=1)
     ap.add_argument("--keep", action="store_true", help="keep workspaces for inspection")
     ap.add_argument("--no-shim", action="store_true")
@@ -146,10 +176,10 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     if args.list:
-        for t in TASKS:
-            print(f"{t.id:20} {t.prompt[:90]}")
+        for t in SUITES["full"]:
+            print(f"{t.id:20} {'core' if t in SUITES['core'] else 'full':5}{t.prompt[:84]}")
         return 0
-    ids = args.tasks.split(",") if args.tasks else [t.id for t in TASKS]
+    ids = args.tasks.split(",") if args.tasks else [t.id for t in SUITES[args.suite]]
     unknown = [i for i in ids if i not in BY_ID]
     if unknown:
         sys.exit(f"unknown task(s) {unknown}; see --list")
@@ -180,7 +210,7 @@ def main(argv=None) -> int:
           + (f"  [INCONCLUSIVE, could not run: {v['inconclusive']}]" if v['inconclusive'] else "")
           + (f"  [answered without tools: {v['answered_without_tools']}]" if v['answered_without_tools'] else ""))
     out = paths.private_dir(paths.state_dir() / "eval") / f"{time.strftime('%Y%m%d-%H%M%S')}-{args.model}.json"
-    out.write_text(json.dumps({"model": args.model, "verdict": v, "results": results,
+    out.write_text(json.dumps({"model": args.model, "suite": "custom" if args.tasks else args.suite, "verdict": v, "results": results,
                                "shim_health": health}, indent=1))
     print(f"saved {out}")
     return 0 if v["eligible"] else 1
