@@ -19,3 +19,6 @@ shim-token
 *.log.*
 shim.pid
 tests/requests.jsonl
+
+# agent worktrees
+.claude/
