@@ -136,9 +136,11 @@ class TurnResult:
 
 class Runtime:
     def __init__(self, cwd: str | Path, provider: str = "bridge", model: str = "auto",
-                 home: Path = DSH_HOME, patch: Path = PATCH, init_timeout: float = 90.0):
+                 home: Path = DSH_HOME, patch: Path = PATCH, init_timeout: float = 90.0,
+                 overlay_files: list | None = None):
         self.cwd, self.provider, self.model = str(Path(cwd).resolve()), provider, model
         self.home, self.patch, self.init_timeout = Path(home), Path(patch), init_timeout
+        self.overlay_files = overlay_files            # None = the user's overlay.d; a list replaces it (hermetic runs)
         self.events: queue.Queue = queue.Queue()      # (method, params) | ("__exit__", {...})
         self.stderr_tail = collections.deque(maxlen=40)
         self._proc: subprocess.Popen | None = None
@@ -153,7 +155,7 @@ class Runtime:
         env = dict(os.environ, DSH_HOME=str(self.home), BRIDGE_KEY=auth.load_or_create_token())
         env["PATH"] = find_node_dir() + os.pathsep + env.get("PATH", "")
         cmd = [str(DSH_BIN), "--profile", "sdk", "--patch", str(self.patch)]
-        for extra in self.overlays():                     # user MCP servers etc.: <config>/overlay.d/*.yml
+        for extra in (self.overlays() if self.overlay_files is None else self.overlay_files):                     # user MCP servers etc.: <config>/overlay.d/*.yml
             cmd += ["--patch", str(extra)]
         # A fresh queue per process: the previous process's reader finishes late
         # and must not post its exit into (or fail requests of) this one.

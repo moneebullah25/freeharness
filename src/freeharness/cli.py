@@ -18,7 +18,7 @@ import sys
 
 from . import __version__
 
-SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "vault", "transcript", "version")
+SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "review", "vault", "transcript", "version")
 
 
 def main(argv=None) -> int:
@@ -51,6 +51,9 @@ def main(argv=None) -> int:
     if cmd == "eval":
         from .eval.run import main as run
         return run(rest) or 0
+    if cmd == "review":
+        from .eval.review import main as run
+        return run(rest)
     from .client.cli import main as chat
     return chat(rest)
 
