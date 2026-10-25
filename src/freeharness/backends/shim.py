@@ -314,9 +314,14 @@ def _as_call(obj, names: dict):
     name = names.get(str(obj["name"]).lower())
     if not name:
         return None
-    if not any(k in obj for k in ("arguments", "parameters", "input")):
-        return None        # {"name": "bash"} alone is a mention (a list of tools), never a call with empty arguments
-    args = obj.get("arguments", obj.get("parameters", obj.get("input", {})))
+    if any(k in obj for k in ("arguments", "parameters", "input")):
+        args = obj.get("arguments", obj.get("parameters", obj.get("input", {})))
+    else:
+        # {"name": "bash"} alone is a mention (a list of tools), never a call with empty arguments; but
+        # {"name": "gh_clone", "repo": "x"} is a call whose arguments sit beside the name (a common slip).
+        args = {k: v for k, v in obj.items() if k not in ("name", "type", "id")}
+        if not args:
+            return None
     if isinstance(args, str):
         try:
             args = json.loads(args)

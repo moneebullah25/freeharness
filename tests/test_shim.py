@@ -811,3 +811,9 @@ def test_name_only_object_is_a_mention_not_a_call():
     assert calls == []
     _, calls = shim.parse_reply("x", ['{"name": "read", "arguments": {}}'], TOOLS_S)
     assert [c["function"]["name"] for c in calls] == ["read"]
+
+
+def test_flat_arguments_beside_the_name_are_a_call():
+    blk = '{"name": "bash", "command": "ls"}'
+    _, calls = shim.parse_reply("```tool_call\n" + blk + "\n```", [blk], TOOLS_S)
+    assert [(c["function"]["name"], json.loads(c["function"]["arguments"])) for c in calls] == [("bash", {"command": "ls"})]
