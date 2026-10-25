@@ -42,6 +42,8 @@ def checks() -> list[tuple[str, str, str]]:
     add({"full": OK, "partial": WARN}.get(st.level, FAIL), f"bash sandbox: {st.level}", st.detail)
     add(OK, "read/grep/glob fence", "fh-guard plugin: home, /tmp, /run unreadable outside the workspace "
         "(a policy fence inside dsh, not a kernel boundary)")
+    from . import github_cmd
+    add(*github_cmd.doctor_row())
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         add(WARN, "not running as root", "a browser with your logins should not run as root")
     status = status_by_site()

@@ -21,7 +21,7 @@ import sys
 
 from . import __version__
 
-SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "review", "vault", "transcript", "memory", "sessions", "version")
+SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "review", "vault", "github", "transcript", "memory", "sessions", "version")
 
 
 def main(argv=None) -> int:
@@ -48,6 +48,9 @@ def main(argv=None) -> int:
         return run(rest)
     if cmd == "vault":
         from .vault_cmd import main as run
+        return run(rest)
+    if cmd == "github":
+        from .github_cmd import main as run
         return run(rest)
     if cmd == "doctor":
         from .doctor import main as run

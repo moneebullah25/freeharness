@@ -43,6 +43,14 @@ APPROVAL_PATCH = """\
     defaultPreset: workspace-write
 """
 
+_CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def clean_text(text: str) -> str:
+    """No terminal escapes or control characters from model-written text (newline and tab survive)."""
+    return _CTRL.sub("", text)
+
+
 _MODE = re.compile(r"escalate sandbox to ([a-z-]+): (.*)", re.S)
 
 
@@ -134,6 +142,7 @@ class Approver:
     def _handle(self, conn: socket.socket):
         outcome = "unavailable"
         req = {}
+        extra: dict = {}
         try:
             buf = b""
             conn.settimeout(5)
@@ -145,6 +154,15 @@ class Approver:
             req = json.loads(buf.split(b"\n", 1)[0])
             if not secrets.compare_digest(str(req.get("token", "")), self.token):
                 req = {}                                   # not our plugin: refuse, and do not log it as a request
+                return
+            if req.get("type") == "confirm":               # a GitHub-gate draft for review (mcp/ghgate.py)
+                req = {k: v for k, v in req.items() if k != "token"}
+                conn.settimeout(None)
+                answer = self.confirm(req)
+                if isinstance(answer, str):
+                    answer = {"outcome": answer}
+                outcome = answer.get("outcome") if answer.get("outcome") in ("confirmed", "changes") else "denied"
+                extra = {"note": clean_text(str(answer.get("note", "")))[:1500]} if outcome == "changes" else {}
                 return
             mode, why = parse_reason(req.get("reason", ""))
             call = self._call_for(req.get("callId"))
@@ -160,13 +178,17 @@ class Approver:
             if req:
                 self.log.append({"request": req, "outcome": outcome})
             try:
-                conn.sendall((json.dumps({"outcome": outcome}) + "\n").encode())
+                conn.sendall((json.dumps({"outcome": outcome, **extra}) + "\n").encode())
             except OSError:
                 pass
             conn.close()
 
     def decide(self, request: dict) -> str:               # pragma: no cover - overridden
         return "rejected"
+
+    def confirm(self, request: dict):                     # pragma: no cover - overridden
+        """A GitHub draft for review: 'confirmed', 'denied', or {'outcome': 'changes', 'note': ...}. Default: denied."""
+        return "denied"
 
 
 class DenyAll(Approver):
@@ -176,12 +198,16 @@ class DenyAll(Approver):
 class FixedAnswer(Approver):
     """For tests: a scripted human. Never use outside tests; there is no such CLI flag."""
 
-    def __init__(self, outcome: str):
+    def __init__(self, outcome: str, confirm="denied"):
         super().__init__()
         self.outcome = outcome
+        self.confirm_answer = confirm           # 'confirmed' | 'denied' | {'outcome': 'changes', 'note': str}
 
     def decide(self, request):
         return self.outcome
+
+    def confirm(self, request):
+        return self.confirm_answer
 
 
 class TerminalApprover(Approver):
@@ -218,6 +244,32 @@ class TerminalApprover(Approver):
                 except (EOFError, KeyboardInterrupt):
                     answer = ""
                 return "allowed-once" if answer in ("y", "yes") else "rejected"
+            finally:
+                if st:
+                    st.start()
+
+    def confirm(self, request):
+        """Show the full GitHub draft and ask approve / reject / request changes. Default: reject."""
+        if not self.stdin.isatty():
+            return "denied"
+        with self._prompt_lock:
+            st = self.status
+            if st:
+                st.stop()
+            try:
+                self.c.print()
+                self.c.print(f"[bold yellow]GitHub: review before anything is sent[/]  ({request.get('action')})")
+                self.c.print(f"  draft saved as {request.get('draft')}", markup=False)
+                for line in clean_text(str(request.get("text", ""))).splitlines():
+                    self.c.print("  | " + line, markup=False, highlight=False)
+                try:
+                    answer = input("approve and send [a], reject [r], request changes [c]? (default r) ").strip().lower()
+                    if answer in ("c", "changes"):
+                        note = input("note for the model: ").strip()
+                        return {"outcome": "changes", "note": note} if note else "denied"
+                except (EOFError, KeyboardInterrupt):
+                    answer = ""
+                return "confirmed" if answer in ("a", "approve", "y", "yes") else "denied"
             finally:
                 if st:
                     st.start()
