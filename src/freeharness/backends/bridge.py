@@ -447,7 +447,19 @@ class Session:
                 f"{self.p.label} is challenging this browser with a human-verification "
                 f"page (title {self.page.title()!r}). Complete it yourself once with "
                 f"`freeharness login {self.p.key}`; it is never bypassed automatically.")
-        _first(self.page, "input", sel=self.p.sel)
+        self._composer()
+
+    def _composer(self):
+        """The prompt box. A page that has not hydrated (seen intermittently on ChatGPT's visible
+        window, which then showed the box in a screenshot taken moments later) gets ONE reload
+        before the lookup is reported as a changed UI."""
+        try:
+            return _first(self.page, "input", timeout=COMPOSER_MS, sel=self.p.sel)
+        except LookupError:
+            self.page.reload()
+            self.page.wait_for_timeout(SPA_PAINT)
+            self._dismiss_consent()
+            return _first(self.page, "input", timeout=COMPOSER_MS, sel=self.p.sel)
 
     def _dismiss_consent(self):
         """Click away cookie/terms dialogs. Best effort: a miss is not an error,
@@ -477,7 +489,7 @@ class Session:
         """Fresh conversation so prior answers can't leak into this one."""
         self.goto(self.p.fresh_url)
         self._dismiss_consent()
-        _first(self.page, "input", sel=self.p.sel)
+        self._composer()
 
     def _streaming(self) -> bool:
         for css in self.p.sel["stop"]:
@@ -511,7 +523,7 @@ class Session:
 
         before = self.page.locator(self.p.sel["assistant"][0]).count()
 
-        box = _first(self.page, "input", sel=self.p.sel)
+        box = self._composer()
         box.click()
         # fill() sets the value directly — typing a multi-line question would
         # submit on the first newline.

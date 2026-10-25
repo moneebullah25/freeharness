@@ -76,17 +76,21 @@ CHATGPT = Provider(
     max_prompt=100_000,
     errors=("something went wrong", "you've reached our limit", "too many requests",
             "please try again later", "unusual activity", "conversation is too long"),
+    # RE-MEASURED 2026-10-25 (the page was rebuilt; the old ids/testids are gone, kept as fallbacks):
+    # the composer is a ProseMirror editor, Send/Stop are labeled buttons, and a reply is
+    # `[data-markdown-text-style=assistant-message]` (a user bubble has data-user-message-bubble).
     sel={
-        "input": ["#prompt-textarea",
-                  "div[contenteditable='true'][id='prompt-textarea']",
-                  "textarea[data-id]",
+        "input": ["div.ProseMirror[contenteditable='true']",
+                  "#prompt-textarea",
                   "div[contenteditable='true']"],
-        "send": ["[data-testid='send-button']",
-                 "button[aria-label*='Send']",
-                 "button[data-testid='fruitjuice-send-button']"],
-        "stop": ["[data-testid='stop-button']",
+        "send": ["button[aria-label='Send']",
+                 "[data-testid='send-button']",
+                 "button[aria-label*='Send']"],
+        "stop": ["button[aria-label='Stop']",
+                 "[data-testid='stop-button']",
                  "button[aria-label*='Stop']"],
-        "assistant": ["[data-message-author-role='assistant']"],
+        "assistant": ["[data-markdown-text-style='assistant-message']",
+                      "[data-message-author-role='assistant']"],
         # Measured against the live challenge page: the turnstile iframe has no
         # src attribute at match time, so these three are what actually fire.
         "blocked": ["input[name='cf-turnstile-response']",

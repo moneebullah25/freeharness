@@ -175,6 +175,21 @@ def test_provider_spec_all_and_unknown():
     print("  providers=all ....... ok")
 
 
+def test_every_selectable_model_is_declared_to_the_harness():
+    # Regression: `--model chatgpt` died with 'no configured model' because the harness config
+    # (data/dsh.patch.yml) lists models by hand and chatgpt had been forgotten.
+    import re
+    from pathlib import Path
+    import freeharness
+    from freeharness.backends import providers
+    from freeharness.client.cli import MODELS
+    text = (Path(freeharness.__file__).parent / "data" / "dsh.patch.yml").read_text()
+    declared = set(re.findall(r"- id: ([a-z]+)\n\s+name:", text))
+    assert set(MODELS) <= declared, set(MODELS) - declared
+    assert set(providers.PROVIDERS) <= declared, set(providers.PROVIDERS) - declared
+    print("  models declared ..... ok")
+
+
 def test_json_about_something_else_is_not_a_tool_call():
     """A model explaining some JSON must not trigger a tool."""
     text = 'An example record is {"name": "Alice", "arguments": {"x": 1}} as you see.'

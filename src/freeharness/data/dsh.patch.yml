@@ -32,6 +32,10 @@
             name: Grok (web, pinned)
             contextWindow: 16000
             reasoningEfforts: false
+          - id: chatgpt
+            name: ChatGPT (web, pinned)
+            contextWindow: 16000
+            reasoningEfforts: false
           - id: deepseek
             name: DeepSeek (web, pinned)
             contextWindow: 16000

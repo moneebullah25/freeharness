@@ -11,7 +11,7 @@ headless, on a free account.
 | **Qwen** | free account | **8/8** (2026-10-25, after the clipboard/parser fixes; an earlier run with the old parser was 7/8) | **Eligible: in the default rotation** |
 | Perplexity | none | 0/8 (2026-10-24): refuses to use tools in every task | Excluded |
 | Grok | free account (+ one-time age prompt) | 0/8 (2026-10-25): answers as if it had its own sandbox ("Created greeting.txt") and never emits our tool calls, so the workspace never changes | Excluded |
-| ChatGPT | free account | not evaluated yet: Cloudflare challenges headless even when signed in (2026-10-25), so it runs in its own visible Chrome window (own profile, `freeharness login chatgpt`) | In `--providers all` only; not in the default rotation until it passes the eval |
+| ChatGPT | free account | not run through the full eval. Page selectors re-measured 2026-10-25 (the site was rebuilt): plain question 24 s, correct. **Tool use is unreliable**: in 2 sampled agent runs, one called the tool and one invented a failure ("the file operation failed") without calling any; the successful run also claimed a read-back it never made. Runs in its own **visible** window (Cloudflare blocks headless) with its own profile: `freeharness login chatgpt` | In `--providers all` only; excluded from the default rotation |
 | DeepSeek | free account | **not run through the full eval** (by request). Spot checks 2026-10-25: plain question 12 s; correct `tool_call`; a write-then-read agent task completed in 3 steps / 27 s. Runs in its own **visible** Chrome window (headless gets HTTP 403) with its own profile: `freeharness login deepseek` | In `--providers all` only, last; becomes eligible after a passing eval |
 | Duck.ai | none | not evaluated: shows a "select all squares containing a duck" CAPTCHA on a message | Excluded (CAPTCHAs are never bypassed) |
 | HuggingChat | free account | not evaluated: free message quota already exhausted ("Upgrade Required") | Excluded |
@@ -22,7 +22,7 @@ headless, on a free account.
 eligible ones first: Gemini, Qwen, then Grok and Perplexity. The shim prints a warning for the ones that failed the eval. The cost is
 real: when Gemini and Qwen are both resting, a turn that lands on Grok or Perplexity often replies "done" without calling a tool, so the
 agent can report success with nothing changed. Waiting for an eligible site (HTTP 429 + Retry-After) is the safer default.
-Sites that block headless Chrome (ChatGPT; DeepSeek returns HTTP 403 to the headless user agent; ChatGPT's visible window signs in and takes a message, but on 2026-10-25 its reply came back empty and the cause (page markup change or a failed free-tier reply) is not yet determined) run in their **own visible Chrome
+Sites that block headless Chrome (ChatGPT; DeepSeek returns HTTP 403 to the headless user agent; ChatGPT works in its visible window after its selectors were re-measured on 2026-10-25, but its tool use is unreliable)) run in their **own visible Chrome
 window with their own profile**, because Chromium locks a profile to one browser and the shared one is headless. Their challenges are
 never bypassed and the browser is not disguised: a normal visible Chrome simply is not blocked. HuggingChat and Duck.ai have no provider entry (free quota used up / CAPTCHA).
 
