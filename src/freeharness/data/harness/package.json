@@ -1,0 +1,11 @@
+{
+  "name": "freeharness-harness",
+  "version": "0.1.0",
+  "description": "Pinned DeepSeek Harness runtime used by freeharness",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.1-rc.2"
+  },
+  "private": true
+}

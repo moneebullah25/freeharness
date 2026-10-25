@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "freeharness"
+version = "0.1.0"
+description = "A terminal coding agent (DeepSeek Harness) running on free web-chat backends, with provider rotation."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "playwright>=1.45,<2",
+  "rich>=13",
+  "prompt_toolkit>=3.0.40",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5", "pip-audit>=2.7", "build>=1.2"]
+
+[project.scripts]
+freeharness = "freeharness.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+freeharness = ["data/*.yml", "data/harness/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["harness: needs the DeepSeek Harness installed (`freeharness setup`)"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "S"]
+ignore = ["E501", "S101", "S603", "S607", "S311", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S310", "E741", "B011", "E731", "E401", "S110", "B018", "B007", "F841", "B905"]

@@ -1,0 +1,59 @@
+# Shared overlay: free web-chat backend via chatgpt-bridge/shim.py + a trimmed toolset.
+# Used with:  dsh --profile sdk --patch free.patch.yml   (terminal client)
+- id: llm-pi-ai
+  config:
+    providers:
+      bridge:
+        displayName: Free web bridge
+        apiKeyEnv: BRIDGE_KEY
+        api: openai-completions
+        baseURL: http://127.0.0.1:8766/v1
+        retryPolicy:
+          mode: normal
+          maxRetries: 2
+        models:
+          - id: auto
+            name: Auto (rotating free sites)
+            contextWindow: 16000
+            reasoningEfforts: false
+          - id: gemini
+            name: Gemini (web, pinned)
+            contextWindow: 16000
+            reasoningEfforts: false
+          - id: perplexity
+            name: Perplexity (web, pinned)
+            contextWindow: 16000
+            reasoningEfforts: false
+          - id: qwen
+            name: Qwen (web, pinned)
+            contextWindow: 16000
+            reasoningEfforts: false
+          - id: grok
+            name: Grok (web, pinned)
+            contextWindow: 16000
+            reasoningEfforts: false
+
+# --- trimmed tools: every schema is re-sent (as prompt text) on every step of a
+# free-tier chat, so keep only what a coding agent needs: bash, fs, search, todo.
+- id: tool-working-directory
+  disabled: true
+- id: tool-skill
+  disabled: true
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent-list-agents
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- id: tool-workflow
+  disabled: true
+- id: tool-goal
+  disabled: true
+- id: tool-jobs
+  disabled: true
+- id: tool-web
+  disabled: true
+- id: plan-mode
+  disabled: true

@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Node (the harness is installed per user by `freeharness setup`, never committed)
+node_modules/
+
+# Anything holding logins, tokens or chat content. NEVER commit these.
+.profile*/
+chrome-profile/
+shim-token
+*.log
+*.log.*
+shim.pid
+tests/requests.jsonl
