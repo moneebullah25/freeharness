@@ -1,7 +1,7 @@
 # GitHub gate (open-source contribution tools)
 
 `freeharness github enable [--live] | disable | status` connects the stdio MCP server `freeharness.mcp.ghgate`
-(tools `gh_*`) to the agent. The agent's bash has no network and no `$HOME`, so git and GitHub access happens
+(tools `gh_*`: 14, including `gh_branch` and `gh_setup_env`) to the agent. The agent's bash has no network and no `$HOME`, so git and GitHub access happens
 **only** through this server, which runs outside that sandbox. The user's pipeline rules are code paths in the
 server, not prompt text. Tests: `tests/test_ghgate.py` (offline, fake GitHub REST/GraphQL server on a free port,
 local bare git repos, a real confirmation socket) and `tests/test_ghgate_dsh.py` (real dsh, scripted model).
@@ -32,6 +32,8 @@ asks y/N once (it refuses without a terminal); the interactive client then print
 | Competing-PR check | issue must be open, a PR not an issue, and not assigned to someone else; no other user's open or merged PR found by searching PRs for the issue number, no such PR in the issue timeline cross-references, issue not closed by a commit, and none of the 40 most recently updated other open PRs touches the same files. **Any API error or unexpected response refuses (fail closed).** |
 | Push | normal `git push` of `refs/heads/<branch>:refs/heads/<branch>` to your fork only (URL comes from a registry outside the workspace, not from the clone's config). Refuses the default branch; refuses and logs `--force`, `-f` (also combined like `-fu`), `--force-with-lease`, `+refspec`; never amends (a rewritten branch is rejected by git as non-fast-forward and reported, never forced). Before pushing it fetches upstream's default branch fresh, then scans commit messages, author/committer identity, changed file names and all added diff lines for `claude`, `anthropic`, `co-authored`, `generated with`, `ponytail` (case-insensitive, Unicode-normalized, zero-width characters removed); refuses artifact-looking files. Clone hooks are disabled (`core.hooksPath=/dev/null`, `--no-verify`), a clone whose config rewrites URLs or includes other config is refused, `.git` must be a real directory. Origin must be your own fork of the upstream. |
 | Clone | destination must resolve (symlinks included) inside `FH_GH_WORKDIR` (default: the session workspace `FREEHARNESS_CWD`); SSH via host alias `FH_GITHUB_SSH_HOST` (default `github.com`); adds `upstream`, restricts `remote.upstream.fetch` to the default branch, sets `remote.upstream.pushurl=DISABLED`. Live clone requires your fork to exist; a dry-run clone of an unforked repo is read-only (origin pushing disabled). |
+| Branch (`gh_branch`) | not a GitHub write, so no confirmation. Needs a clone made by `gh_clone` (same registry, `.git` and config checks as push). Name must match `^[A-Za-z0-9][A-Za-z0-9._/-]*$` and pass `git check-ref-format`; refused: the default branch name (case-insensitive), `HEAD`, `@`, `..`, `//`, leading dots, `.lock`, `@{`, names starting `refs/ heads/ remotes/ upstream/ origin/`, a branch that already exists, a dirty tree (tracked changes or untracked files), a clone config that defines `filter.*` or diff drivers. It then runs the same fetch `gh_push` uses (URL from the registry, never the clone's remotes; one refspec `+refs/heads/<default>:refs/remotes/upstream/<default>`; no tags, no submodules; hooks, fsmonitor, credential helpers and the system config disabled; `GIT_SSH_COMMAND` from the server's environment beats the clone's `core.sshCommand`) and `git checkout --no-track -b <name> refs/remotes/upstream/<default>`. Returns the branch and the HEAD SHA. Exists because the agent's bash has no network: `git fetch && git checkout -b` there fails at the fetch and the chain skips the checkout. |
+| Environment (`gh_setup_env`) | not a GitHub write, no confirmation. Builds `<workdir>/<repo>-venv` (outside the clone) so bash can run the project's tests and lint, and returns a ready command prefix (`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=<clone>/src:<clone> <venv>/bin/python -m`, used as `cd <clone> && <prefix> pytest -q`). **What is installed:** only requirements the repo declares, read from upstream's committed files (`refs/remotes/upstream/<default>`, so edits the agent made in the working tree cannot add packages): `pyproject.toml` `[project].dependencies`, `optional-dependencies` and `dependency-groups` named dev/test/lint/ci/check/style/typing/quality/qa (or named in `extras`), top-level `requirements*.txt` and `requirements/*.txt` for base/dev/test/lint/ci names (or named in `extras`), `-r` includes inside the repo only. The project itself is never installed and nothing from the repo is executed outside the sandbox (no `setup.py`, no build backend). **Skipped and listed in the result:** `-e`, local paths, VCS/URL requirements (only `https://pypi.org` and `https://files.pythonhosted.org` URLs pass), `--index-url`/`--extra-index-url`/`--find-links`/`--trusted-host`/`--no-index`/other pip options, constraint files, any line that is not a plain `name[extras] version ; marker`. The index is never taken from a repo file: it is `FH_GH_PIP_INDEX` (default `https://pypi.org/simple`). **Where pip runs:** inside a bubblewrap sandbox built by `data/fh_sandbox_runner.py --net-install`, the one caller of that mode: network on; `$HOME`, `/tmp`, `/run`, the whole work folder (clone included) hidden; environment cleared (only proxy and CA variables pass through); `--isolated --no-cache-dir`; the venv directory is the only writable path; hard timeout (`FH_GH_ENV_TIMEOUT`, default 600 s) with the process group killed; output capped (first 1.5 KB + last 6 KB kept). No bwrap or not Linux: refused before anything runs. A failure deletes the half-built venv. The venv inherits the standard toolchain (see below) through a `.pth` file, so pytest/ruff/... are not reinstalled per project. After the build the tool runs the venv's python and each tool's `--version` inside the agent's own bash sandbox and reports what works there. Re-running with the same declared set reuses the venv. |
 | Review replies | only on your own PRs, thread must belong to the PR, `sha` must be a commit in the PR, the sha is added to the text if missing, markers refused; resolving requires a recorded live reply to that thread first (a dry-run reply does not count for live). |
 | Search | `repo:`, `is:`, `state:`, `type:`, `org:`, `user:`, `archived:` qualifiers are stripped from the model's query so open **and** closed are always searched; each successful call appends `{query, kind, repo, time, count}` to the evidence file. |
 
@@ -56,6 +58,42 @@ asks y/N once (it refuses without a terminal); the interactive client then print
 - Live GitHub behaviour (rate limits, abuse detection, GraphQL schema drift) was not exercised: tests use a fake
   server that implements only the endpoints the gate calls.
 
+## Installing dependencies (`gh_setup_env`): trust model and limits
+
+The agent's bash has no network. Installing the project's test/lint dependencies therefore has to happen on the
+server side, which is the one place a package from a public index runs with network access. The design keeps that
+to the narrowest thing that works:
+
+- **Who chooses packages:** the project's maintainers (their committed files at upstream's default branch), filtered
+  to plain PyPI requirements. The agent can only pick which of the repo's own declared groups/files to include
+  (`extras`, names validated). It cannot name a package, an index, a URL or a pip option.
+- **Where code from a package can run:** `pip install` may run build code of source distributions of those
+  dependencies (and `--prefer-binary` only prefers wheels). That code runs inside the install sandbox: it can reach the
+  network (including loopback services on this host, since the network namespace is shared) and read the host's
+  system directories (`/usr`, `/etc`, ...), but not `$HOME`, `/tmp`, `/run`, other folders of the work folder, nor
+  the server's environment (token included); it can write only into the new venv. Nothing is installed or run from the
+  repo itself in the unsandboxed server.
+- **What it does not defend against:** a malicious or compromised package (or index) can still put arbitrary Python into
+  the venv, which later runs in the agent's no-network sandbox (harmless there) and, if a human runs the same venv by
+  hand, with that human's rights. Hash pinning is not enforced (`--hash` options are dropped). A package can
+  exfiltrate what the install sandbox can read (system files) over the network. Same-kernel confinement (bubblewrap),
+  not a VM. The standard toolchain is installed the ordinary way by `freeharness toolchain install`, outside any sandbox,
+  from versions pinned in `toolchain.py` (dependencies of those float).
+- **Failing closed:** no `bwrap`, not Linux, a runner that cannot build the sandbox, a timeout, or a failing pip: nothing is left
+  behind and the result says so. Requirements the tool had to skip are listed, never silently dropped.
+- **Limits of the result:** the project is not installed (imports come from `PYTHONPATH`): tests that read installed
+  metadata, entry points or compiled extensions can fail for that reason; Poetry-only dependency tables are not read;
+  `pre-commit` hooks need network and will not run in bash. No network test against a real index exists in the suite
+  (it uses a local wheelhouse with `pip --no-index --find-links`); run `freeharness toolchain install` once for a real check.
+
+## The standard toolchain
+
+`freeharness toolchain install` (also run by `freeharness setup`; `status` and `doctor` report it) builds
+`<data>/toolchain-venv` with pinned pip, setuptools, wheel, build, pytest, coverage, ruff, flake8, black, isort, mypy and
+pre-commit. The sandbox runner binds it **read-only** and puts its `bin/` first on PATH, so bash has `python`, `python3`
+and these tools without any install, still with no network and no `$HOME`. `doctor` shows `standard toolchain: full |
+partial | missing`, measured by running `command -v` and `--version` inside the real sandbox, not from the files on disk.
+
 ## Environment
 
 | Variable | Meaning |
@@ -70,4 +108,9 @@ asks y/N once (it refuses without a terminal); the interactive client then print
 | `FH_GH_API` | API base URL (tests; default `https://api.github.com`) |
 | `FH_GH_GIT_URL` | git URL template with `{host}` `{repo}` (tests) |
 | `FH_CONFIRM_SOCKET`, `FH_CONFIRM_TOKEN` | set by the client for the server (mapped from the approval socket by the overlay row) |
+| `FH_GH_PIP_INDEX` | index URL for `gh_setup_env` (default `https://pypi.org/simple`; operator setting, never from the repo or the model) |
+| `FH_GH_PIP_FIND_LINKS` | a local wheelhouse directory instead of an index (`--no-index`; tests, air-gapped setups) |
+| `FH_GH_ENV_TIMEOUT` | seconds `gh_setup_env` may take in total (default 600) |
+| `FH_TOOLCHAIN` | standard toolchain venv location (default `<data>/toolchain-venv`) |
+| `FH_SANDBOX_TOOLS` | extra read-only tool roots for the bash sandbox, `/a:/b` (each root's `bin/` goes on PATH) |
 | `FH_GH_CONFIRM_TIMEOUT` | seconds to wait for the human (default 240) |

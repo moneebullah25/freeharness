@@ -800,7 +800,7 @@ def redacted_ok(s):
 
 # ============================================================================ protocol and tool list
 
-def test_stdio_protocol_lists_the_twelve_tools_with_short_descriptions(w):
+def test_stdio_protocol_lists_the_fourteen_tools_with_short_descriptions(w):
     env = dict(os.environ, PYTHONPATH=SRC)
     proc = subprocess.Popen([sys.executable, "-m", "freeharness.mcp.ghgate"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env)
 
@@ -814,8 +814,8 @@ def test_stdio_protocol_lists_the_twelve_tools_with_short_descriptions(w):
         rpc({"jsonrpc": "2.0", "method": "notifications/initialized"})
         tools = rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
         assert [t["name"] for t in tools] == ["gh_repo_info", "gh_search", "gh_get_file", "gh_list_pr_files", "gh_pr_threads",
-                                              "gh_fork", "gh_clone", "gh_push", "gh_issue_create", "gh_pr_create",
-                                              "gh_pr_reply", "gh_pr_resolve_thread"]
+                                              "gh_fork", "gh_clone", "gh_branch", "gh_setup_env", "gh_push",
+                                              "gh_issue_create", "gh_pr_create", "gh_pr_reply", "gh_pr_resolve_thread"]
         assert max(len(t["description"]) for t in tools) <= 100
         assert len(json.dumps(tools)) < 5000, "the model sees these every step"
         assert rpc({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "rm_rf", "arguments": {}}})["error"]["code"] == -32602

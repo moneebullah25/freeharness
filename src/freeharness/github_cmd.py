@@ -28,7 +28,8 @@ BEGIN, END = "<!-- freeharness:github -->", "<!-- /freeharness:github -->"
 INSTRUCTIONS = f"""{BEGIN}
 ## GitHub contribution (gh_* tools)
 Bash has no network or git credentials; use only the gh_* tools. Order: gh_repo_info (read CONTRIBUTING), gh_search
-issues AND prs (open and closed, 4+ different queries), gh_fork, gh_clone, work on a feature branch in the clone
+issues AND prs (open and closed, 4+ different queries), gh_fork, gh_clone, gh_branch (feature branch from upstream),
+gh_setup_env (test/lint environment; returns the command prefix for pytest/ruff in bash), commit in the clone
 (plain commits, no attribution or tool names), gh_push, then gh_issue_create / gh_pr_create (PR body needs `Fixes #N`).
 Writes show your draft to the user, who approves, rejects, or sends back a note: revise and call again. A refusal
 says what to fix; do not try to get around a gate.

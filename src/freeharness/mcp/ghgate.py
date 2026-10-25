@@ -1,8 +1,8 @@
 """
 A stdio MCP server that lets the agent do open-source contribution work on GitHub with the user's
 pipeline rules enforced IN CODE, not by prompt. Tools: gh_repo_info, gh_search, gh_get_file,
-gh_list_pr_files, gh_pr_threads, gh_fork, gh_clone, gh_push, gh_issue_create, gh_pr_create,
-gh_pr_reply, gh_pr_resolve_thread. Run by DeepSeek Harness (overlay row written by
+gh_list_pr_files, gh_pr_threads, gh_fork, gh_clone, gh_branch, gh_setup_env, gh_push, gh_issue_create,
+gh_pr_create, gh_pr_reply, gh_pr_resolve_thread. Run by DeepSeek Harness (overlay row written by
 `freeharness github enable`); see docs/GITHUB_GATE.md.
 
 The agent's sandbox has no network and no HOME, so git and GitHub access happens only here, in a
@@ -23,14 +23,19 @@ from __future__ import annotations
 import argparse
 import base64
 import dataclasses
+import hashlib
 import inspect
 import json
 import os
 import re
+import shlex
+import shutil
+import signal
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unicodedata
 import urllib.error
@@ -39,7 +44,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from .. import paths
+from .. import depfiles, paths, security, toolchain
 
 # --------------------------------------------------------------------------- patterns
 
@@ -55,6 +60,11 @@ MAX_FILE_BYTES = 1_000_000
 MAX_TEXT = 30_000
 MAX_OUT = 7000
 MAX_DIFF = 5_000_000
+EXTRA_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,49}$")
+ENV_TOOLS = ("pytest", "ruff", "flake8", "black", "isort", "mypy", "pre_commit", "coverage")
+PASS_ENV = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE")
+PTH_WRITER = ("import pathlib,sys,sysconfig;p=pathlib.Path(sysconfig.get_paths()['purelib']);p.mkdir(parents=True,exist_ok=True);"
+              "(p/'fh-toolchain.pth').write_text(sys.argv[1]+'\\n')")
 
 CLA_RE = re.compile(r"\bCLA\b|contributor\s+licen[sc]e\s+agreement|copyright\s+assignment", re.I)
 DCO_RE = re.compile(r"\bDCO\b|developer\s+certificate\s+of\s+origin|signed-off-by", re.I)
@@ -148,6 +158,9 @@ class Config:
     git_url: str = ""                     # template with {host} and {repo}; tests point it at local bare repos
     git_name: str = ""
     git_email: str = ""
+    pip_index: str = "https://pypi.org/simple"    # gh_setup_env; operator config (FH_GH_PIP_INDEX), never from the model
+    pip_find_links: str = ""                      # a local wheelhouse instead of an index (FH_GH_PIP_FIND_LINKS; tests)
+    env_timeout: float = 600.0
     run_id: str = dataclasses.field(default_factory=lambda: uuid.uuid4().hex[:12])
 
     @classmethod
@@ -164,6 +177,10 @@ class Config:
             timeout = float(env.get("FH_GH_CONFIRM_TIMEOUT", "240"))
         except ValueError:
             timeout = 240.0
+        try:
+            env_timeout = float(env.get("FH_GH_ENV_TIMEOUT", "600"))
+        except ValueError:
+            env_timeout = 600.0
         return cls(token=token, api=(env.get("FH_GH_API") or "https://api.github.com").rstrip("/"),
                    dryrun=env.get("FH_GH_DRYRUN", "1") != "0",
                    workdir=Path(wd).expanduser().resolve() if wd else None, state=state,
@@ -171,7 +188,9 @@ class Config:
                    confirm_sock=env.get("FH_CONFIRM_SOCKET", ""), confirm_token=env.get("FH_CONFIRM_TOKEN", ""),
                    confirm_timeout=timeout, ssh_host=env.get("FH_GITHUB_SSH_HOST") or "github.com",
                    git_url=env.get("FH_GH_GIT_URL", ""), git_name=env.get("FH_GH_GIT_NAME", ""),
-                   git_email=env.get("FH_GH_GIT_EMAIL", ""))
+                   git_email=env.get("FH_GH_GIT_EMAIL", ""),
+                   pip_index=env.get("FH_GH_PIP_INDEX") or "https://pypi.org/simple",
+                   pip_find_links=env.get("FH_GH_PIP_FIND_LINKS", ""), env_timeout=env_timeout)
 
 
 # --------------------------------------------------------------------------- GitHub REST
@@ -679,6 +698,228 @@ class Gate:
                 f"{'' if fork else ' (READ-ONLY: no fork yet, dry-run)'}, upstream={repo}; default branch {db}.\n"
                 f"Make a branch (never commit on {db}), commit normally, then gh_push.")
 
+    # ======================================================================== branch, environment
+
+    @staticmethod
+    def _branch_name(raw, default: str) -> str:
+        if not isinstance(raw, str) or not BRANCH_RE.match(raw):
+            raise Refuse("invalid branch name: use letters, digits, . _ - and / (for example fix/123-empty-list)")
+        segs = raw.split("/")
+        if (".." in raw or "//" in raw or raw.endswith(("/", ".", ".lock")) or "@{" in raw
+                or any(s.startswith(".") or s.endswith(".lock") for s in segs)
+                or segs[0].lower() in ("refs", "heads", "remotes", "upstream", "origin")):
+            raise Refuse("invalid branch name: no '..', '//', leading dots, '.lock', or names starting with refs/ heads/ remotes/ upstream/ origin/")
+        if raw.lower() in (default.lower(), "head", "@"):
+            raise Refuse(f"refusing to use the default branch name ({default}); pick a feature branch name such as fix/<issue>-<slug>")
+        return raw
+
+    def gh_branch(self, repo_dir: str, name: str) -> str:
+        rd, reg = self._registered(repo_dir)
+        db, up = reg["default_branch"], reg["upstream"]
+        name = self._branch_name(name, db)
+        if self._git(None, "check-ref-format", "--branch", name, check=False, raw=True)[0] != 0:
+            raise Refuse("invalid branch name (git check-ref-format)")
+        if self._git(rd, "config", "--local", "--get-regexp", r"^(filter\.|diff\..*\.(textconv|command))", check=False).strip():
+            raise Refuse("the clone's git config defines filters or diff drivers (programs git would run on checkout); refusing")
+        if self._git(rd, "rev-parse", "--verify", "-q", f"refs/heads/{name}", raw=True, check=False)[0] == 0:
+            raise Refuse(f"a local branch named {name!r} already exists; choose another name")
+        dirty = [ln for ln in self._git(rd, "status", "--porcelain", "--untracked-files=normal").splitlines() if ln.strip()]
+        if dirty:
+            raise Refuse(f"the working tree is not clean ({len(dirty)} change(s): {'; '.join(x.strip() for x in dirty[:5])}). "
+                         "Commit them on their branch or discard them with git (restore / clean), then call gh_branch again.")
+        # the same restricted fetch gh_push uses: URL from the registry (not the clone's config), one branch, no tags
+        self._git(rd, "fetch", "--no-tags", "--no-recurse-submodules", self._url(up),
+                  f"+refs/heads/{db}:refs/remotes/upstream/{db}", timeout=300)
+        self._git(rd, "checkout", "--no-track", "-b", name, f"refs/remotes/upstream/{db}")
+        sha = self._git(rd, "rev-parse", "HEAD").strip()
+        self._log("branch", repo=up, repo_dir=str(rd), branch=name, base=f"upstream/{db}", sha=sha)
+        return (f"on new branch {name} at {sha[:12]}, created from a fresh upstream/{db} ({sha}). Not pushed. "
+                f"Next: gh_setup_env, make the fix, run tests and lint, commit, gh_push.")
+
+    # -- gh_setup_env --------------------------------------------------------------------------------
+
+    def _tree_reader(self, rd: Path, ref: str):
+        def read(path: str) -> str | None:
+            if not path or path.startswith(("/", "-")) or ".." in path.split("/"):
+                return None
+            size = self._git(rd, "cat-file", "-s", f"{ref}:{path}", check=False, raw=True)
+            if size[0] != 0 or not size[1].strip().isdigit() or int(size[1]) > depfiles.MAX_FILE_BYTES:
+                return None
+            rc, out, _ = self._git(rd, "cat-file", "blob", f"{ref}:{path}", check=False, raw=True)
+            return out if rc == 0 else None
+        return read
+
+    def _extras(self, extras) -> set[str]:
+        if not isinstance(extras, str):
+            raise Refuse("extras must be text: names separated by commas, for example 'test,lint'")
+        names = [x for x in re.split(r"[,\s]+", extras.strip()) if x]
+        if len(names) > 10 or any(not EXTRA_RE.match(x) for x in names):
+            raise Refuse("extras: up to 10 names of letters, digits, . _ - (these select groups or requirements files the repo declares)")
+        return {depfiles.norm(x) for x in names}
+
+    def _run_capped(self, argv: list[str], timeout: float, env: dict, cap: int = 6000) -> tuple[int, str]:
+        """Run with a hard timeout and bounded memory: keeps the first 1500 and the last `cap` bytes of output."""
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,  # noqa: S603
+                                start_new_session=True)
+        head, tail, total = bytearray(), bytearray(), [0]
+
+        def pump():
+            while True:
+                chunk = os.read(proc.stdout.fileno(), 65536)
+                if not chunk:
+                    return
+                total[0] += len(chunk)
+                room = 1500 - len(head)
+                if room > 0:
+                    head.extend(chunk[:room])
+                    chunk = chunk[room:]
+                tail.extend(chunk)
+                if len(tail) > cap:
+                    del tail[:len(tail) - cap]
+        th = threading.Thread(target=pump, daemon=True)
+        th.start()
+        timed_out = False
+        try:
+            proc.wait(timeout=max(1.0, timeout))
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                proc.kill()
+            proc.wait()
+        th.join(timeout=5)
+        omitted = total[0] - len(head) - len(tail)
+        text = head.decode("utf-8", "replace") + (f"\n[... {omitted} bytes of output omitted ...]\n" if omitted > 0 else "") \
+            + tail.decode("utf-8", "replace")
+        return (-9 if timed_out else proc.returncode), text
+
+    def _net_argv(self, venv: Path, cmd: list[str], ro: list[str], hide: list[str]) -> list[str]:
+        flags: list[str] = []
+        for h in hide:
+            flags += ["--hide", h]
+        for r in ro:
+            flags += ["--ro", r]
+        for k in PASS_ENV:
+            if os.environ.get(k):
+                flags += ["--setenv", k, os.environ[k]]
+        return [*security.runner_command(), "--net-install", str(venv), *flags, "--", *cmd]
+
+    def _net_sandbox(self, venv: Path, cmd: list[str], deadline: float, ro: list[str], hide: list[str]) -> tuple[int, str]:
+        """One command in the install sandbox: network yes; $HOME, /tmp, /run, other files and the environment no;
+        `venv` is the only writable path. Only this tool builds this argv (see data/fh_sandbox_runner.py)."""
+        left = deadline - time.monotonic()
+        if left <= 1:
+            return -9, "timed out"
+        return self._run_capped(self._net_argv(venv, cmd, ro, hide), left,
+                                {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "")})
+
+    def _src_dirs(self, rd: Path) -> list[str]:
+        src = rd / "src"
+        if src.is_dir() and not src.is_symlink() and any(c.is_dir() and not c.name.startswith(".") for c in src.iterdir()):
+            return [str(src), str(rd)]
+        return [str(rd)]
+
+    def _install_env(self, venv: Path, col, tc: Path | None, deadline: float) -> None:
+        c = self.cfg
+        if venv.exists():
+            shutil.rmtree(venv)
+        venv.mkdir(mode=0o755)
+        py = str(tc / "bin" / "python") if tc else os.path.realpath(sys.executable)   # not the freeharness venv's own link
+        ro: list[str] = []
+        home = os.path.realpath(os.environ["HOME"]) if os.environ.get("HOME") else ""
+        for base in {os.path.realpath(py), os.path.realpath(sys.base_prefix)}:
+            if home and base.startswith(home + os.sep):          # a Python that lives under $HOME is hidden: bind its install
+                ro.append(os.path.dirname(os.path.dirname(base)) if "/bin/" in base else base)
+        if tc:
+            ro.append(str(tc))
+        pip = ["--isolated", "--no-input", "--no-cache-dir", "--disable-pip-version-check", "--progress-bar", "off",
+               "--no-warn-script-location", "--prefer-binary"]
+        if c.pip_find_links:
+            pip += ["--no-index", "--find-links", c.pip_find_links]
+            ro.append(c.pip_find_links)
+        else:
+            pip += ["--index-url", c.pip_index]
+        steps = [("create the virtualenv", [py, "-m", "venv", str(venv)])]
+        if tc:
+            sp = toolchain._site_packages(tc)
+            if sp:
+                steps.append(("link the standard toolchain", [str(venv / "bin" / "python"), "-c", PTH_WRITER, str(sp)]))
+        if col.reqs:
+            fd = os.open(venv / ".fh-requirements.txt", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write("\n".join(col.reqs) + "\n")
+            steps.append(("pip install the declared dependencies",
+                          [str(venv / "bin" / "python"), "-m", "pip", "install", *pip, "-r", str(venv / ".fh-requirements.txt")]))
+        for what, cmd in steps:
+            rc, out = self._net_sandbox(venv, cmd, deadline, ro, [str(c.workdir)])
+            if rc != 0:
+                shutil.rmtree(venv, ignore_errors=True)
+                why = f"timed out after {c.env_timeout:.0f}s" if rc == -9 else f"exit {rc}"
+                raise Refuse(f"could not {what} ({why}); nothing was left behind.\n{_clip(out.strip(), 1800)}")
+
+    def gh_setup_env(self, repo_dir: str, extras: str = "") -> str:
+        rd, reg = self._registered(repo_dir)
+        if sys.platform != "linux" or not shutil.which("bwrap"):
+            raise Refuse("installing dependencies needs the bubblewrap sandbox (bwrap, Linux) and it is not available here: "
+                         "nothing was installed. Install bubblewrap, or run the project's tests by hand.")
+        c = self.cfg
+        wanted = self._extras(extras)
+        up, db = reg["upstream"], reg["default_branch"]
+        ref = f"refs/remotes/upstream/{db}"
+        if self._git(rd, "rev-parse", "--verify", "-q", ref, raw=True, check=False)[0] != 0:
+            raise Refuse(f"no upstream/{db} in the clone; gh_clone it again")
+        top = [x for x in self._git(rd, "ls-tree", "--name-only", ref).split("\n") if x]
+        sub = [x for x in self._git(rd, "ls-tree", "-r", "--name-only", ref, "--", "requirements/").split("\n") if x]
+        # The install list comes from upstream's committed files, never from the working tree the agent can edit.
+        col = depfiles.collect(top, sub, self._tree_reader(rd, ref), wanted)
+        venv = c.workdir / f"{up.split('/')[1]}-venv"
+        if venv.is_symlink() or (venv.exists() and not venv.is_dir()) or str(venv) in self._load("registry.json"):
+            raise Refuse(f"{venv} exists and is not a virtualenv made by this tool; move or delete it")
+        tc = toolchain.toolchain_dir()
+        tstat = toolchain.status(tc)[0]
+        inherit = tc if tstat != "missing" and toolchain._site_packages(tc) else None
+        fp = hashlib.sha256(json.dumps([col.reqs, sys.version, str(inherit), tstat, c.pip_index, c.pip_find_links]).encode()).hexdigest()
+        envs = self._load("envs.json")
+        cached = envs.get(str(venv)) == fp and (venv / "bin" / "python").exists()
+        if not cached:
+            self._install_env(venv, col, inherit, time.monotonic() + c.env_timeout)
+            envs[str(venv)] = fp
+            self._store("envs.json", envs)
+        py = str(venv / "bin" / "python")
+        # does it work where the agent will use it? the same sandbox its bash tool runs in
+        probe = (f"{shlex.quote(py)} -c 'import sys; print(\"python\", sys.version.split()[0])' && "
+                 f"for m in {' '.join(ENV_TOOLS)}; do {shlex.quote(py)} -m $m --version >/dev/null 2>&1 && echo \"ok:$m\"; done")
+        try:
+            r = security._run_confined(probe, c.workdir, timeout=120)
+            out, err = r.stdout, r.stderr
+        except (OSError, subprocess.SubprocessError) as e:
+            out, err = "", str(e)
+        usable = [ln[3:].replace("_", "-") for ln in out.splitlines() if ln.startswith("ok:")]
+        pp = ":".join(self._src_dirs(rd))
+        prefix = f"PYTHONDONTWRITEBYTECODE=1 PYTHONPATH={pp} {py} -m"
+        self._log("setup_env", repo=up, venv=str(venv), requirements=len(col.reqs), cached=cached, skipped=len(col.skipped),
+                  toolchain=tstat)
+        lines = [f"environment ready: {venv} ({'unchanged, reused' if cached else 'built'}; "
+                 f"{len(col.reqs)} declared requirement(s) from: {', '.join(col.sources) or 'no declared files found'})"]
+        if not out.startswith("python"):
+            lines += ["WARNING: the venv's python does not start inside the bash sandbox: " + _clip(err.strip() or out.strip(), 300),
+                      "(a Python installed under $HOME is hidden from the sandbox; list its install dir in FH_SANDBOX_TOOLS)"]
+        else:
+            lines.append(f"python in the sandbox: {py} ({out.splitlines()[0]}); `python` and `python3` also resolve there")
+        lines.append("tools that run here: " + (", ".join(usable) or "none") +
+                     ("" if usable else "  (none declared by the repo and no standard toolchain: python -m unittest still works)"))
+        if tstat != "full":
+            lines.append(f"standard toolchain is {tstat}: run `freeharness toolchain install` for pytest/ruff/flake8/black/mypy")
+        lines += [f"COMMAND PREFIX (copy it into bash after `cd {rd} &&`):", f"  {prefix}",
+                  "  then the tool, e.g.  <prefix> pytest -q -p no:cacheprovider   or   <prefix> ruff check .",
+                  "The project itself is NOT installed (imports come from PYTHONPATH); tests that read installed metadata or "
+                  "need a compiled extension may fail for that reason."]
+        if col.skipped:
+            lines.append(f"skipped {len(col.skipped)} unsafe or unsupported line(s): " + " | ".join(col.skipped[:6]))
+        lines += [f"note: {n}" for n in col.notes[:4]]
+        return "\n".join(lines)
+
     @staticmethod
     def _force_attempt(raw: str) -> bool:
         for tok in raw.split():
@@ -1012,6 +1253,9 @@ TOOLS = [
     _tool("gh_pr_threads", "Review threads on a PR.", {"repo": S, "number": INT}, ["repo", "number"]),
     _tool("gh_fork", "Fork a repo (user confirms).", {"repo": S}, ["repo"]),
     _tool("gh_clone", "Clone your fork into the work folder; adds upstream.", {"repo": S, "dest": S}, ["repo", "dest"]),
+    _tool("gh_branch", "Fetch upstream and create a feature branch from its default branch.", {"repo_dir": S, "name": S}, ["repo_dir", "name"]),
+    _tool("gh_setup_env", "Make a venv with the repo's declared test/lint deps; returns the command prefix to use.",
+          {"repo_dir": S, "extras": S}, ["repo_dir"]),
     _tool("gh_push", "Normal push of a feature branch to your fork (user confirms; never force).", {"repo_dir": S, "branch": S}, ["repo_dir", "branch"]),
     _tool("gh_issue_create", "Draft an issue; the user reviews it, then it is posted.", {"repo": S, "title": S, "body": S}, ["repo", "title", "body"]),
     _tool("gh_pr_create", "Draft a PR (body needs 'Fixes #N'); the user reviews it, then it is posted.",

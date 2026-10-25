@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(not rpc.DSH_BIN.exists(), reason="DeepSeek Harne
 TOKEN = "ghp_DSHCANARYDSHCANARYDSHCANARY99"
 REQUESTS: list = []
 EXPECTED = ["gh_repo_info", "gh_search", "gh_get_file", "gh_list_pr_files", "gh_pr_threads", "gh_fork", "gh_clone",
-            "gh_push", "gh_issue_create", "gh_pr_create", "gh_pr_reply", "gh_pr_resolve_thread"]
+            "gh_branch", "gh_setup_env", "gh_push", "gh_issue_create", "gh_pr_create", "gh_pr_reply", "gh_pr_resolve_thread"]
 
 
 def _text(content) -> str:

@@ -61,6 +61,17 @@ def free_port() -> int:
     (".venv/bin/ruff format --check src", 0, False, True),
     ("FOO=1 uv run pytest -x", 0, True, False),
     ("python3 tests/test_app.py", 0, True, False),
+    # through the venv prefix gh_setup_env hands out
+    ("cd /ws/proj && PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/ws/proj/src:/ws/proj /ws/proj-venv/bin/python -m pytest -q -p no:cacheprovider", 0, True, False),
+    ("PYTHONPATH=/ws/proj /ws/proj-venv/bin/python -m ruff check . && PYTHONPATH=/ws/proj /ws/proj-venv/bin/python -m pytest", 0, True, True),
+    ("PYTHONPATH=/p /v/bin/python -m flake8 src", 0, False, True),
+    ("PYTHONPATH=/p /v/bin/python -m black --check .", 0, False, True),
+    ("PYTHONPATH=/p /v/bin/python -m mypy src", 0, False, True),
+    ("PYTHONPATH=/p /v/bin/python -m pre_commit run --all-files", 0, False, True),
+    ("PYTHONPATH=/p /v/bin/python -m coverage run -m pytest", 0, True, False),
+    ("/v/bin/pytest -q", 0, True, False),
+    ("PYTHONPATH=/p /v/bin/python -m pytest", 1, False, False),
+    ("echo PYTHONPATH=/p /v/bin/python -m pytest", 0, False, False),
 ])
 def test_classify_what_a_command_proves(cmd, code, test, lint):
     assert oj.classify(cmd, code) == {"test": test, "lint": lint}

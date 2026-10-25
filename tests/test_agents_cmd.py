@@ -287,7 +287,7 @@ def test_bundled_skill_is_small_and_complete():
     assert fm["name"] == "oss-contribution" and len(fm["description"]) < 200
     assert ": " not in fm["description"] and " #" not in fm["description"]       # a plain YAML scalar: dsh drops the skill otherwise
     for tool in ("gh_repo_info", "gh_search", "gh_get_file", "gh_list_pr_files", "gh_pr_threads", "gh_fork",
-                 "gh_clone", "gh_push", "gh_issue_create", "gh_pr_create", "gh_pr_reply", "gh_pr_resolve_thread"):
+                 "gh_clone", "gh_branch", "gh_setup_env", "gh_push", "gh_issue_create", "gh_pr_create", "gh_pr_reply", "gh_pr_resolve_thread"):
         assert tool in text, tool
     for must in ("STOP", "Never work around", "Fixes #N", "NEW commit", "force-push", "4 query variants",
                  "Vote gate", "reports/<repo>_issues.md"):

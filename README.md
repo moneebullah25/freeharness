@@ -75,7 +75,7 @@ so each runs in its **own visible Chrome window** with its own profile: sign in 
 when the site is first used. Evidence: [docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ## Other commands
-`freeharness setup | login [site…] [--check] | doctor [--report] | vault <path> | memory … | sessions | transcript [id] | agents … | oss run|report|list | serve | eval | version`
+`freeharness setup | toolchain install|status | login [site…] [--check] | doctor [--report] | vault <path> | memory … | sessions | transcript [id] | agents … | oss run|report|list | serve | eval | version`
 
 ## Where things live
 Per-user directories, owner-only; `FREEHARNESS_HOME=/dir` puts everything under one root. See [docs/PRIVACY.md](docs/PRIVACY.md).

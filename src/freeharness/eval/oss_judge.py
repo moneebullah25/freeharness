@@ -141,6 +141,7 @@ _TEST = [re.compile(p) for p in (
     r"^go test\b", r"^cargo (test|nextest)\b", r"^dotnet test\b", r"^(rake|bundle exec rake) test\b",
     r"^(mvn|\./mvnw|gradle|\./gradlew)\b.*\btest\b",
     r"^python3? \S*test\S*\.py\b",
+    r"^coverage run\b.*\b(pytest|unittest)\b",
 )]
 _LINT = [re.compile(p) for p in (
     r"^(ruff|flake8|pylint|black|isort|mypy|pyright|pycodestyle|eslint|prettier|stylelint|rubocop|shellcheck|"
@@ -189,6 +190,7 @@ def normalize(segment: str) -> str:
             break
     if toks:
         toks[0] = os.path.basename(toks[0]) if "/" in toks[0] and not toks[0].startswith("./") else toks[0]
+        toks[0] = {"pre_commit": "pre-commit"}.get(toks[0], toks[0])        # `<venv>/bin/python -m pre_commit run`
     return " ".join(toks)
 
 

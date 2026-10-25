@@ -69,7 +69,7 @@ def build_prompt(repo: str, component: str, live: bool) -> str:
         "in `issue=` and in `Fixes #N` for gh_pr_create. Do not ask in chat before calling the tools.")
     return f"""OSS contribution task for {repo}.
 
-All GitHub access goes ONLY through the gh_* tools (gh_repo_info, gh_search, gh_get_file, gh_fork, gh_clone, gh_push, gh_issue_create, gh_pr_create). Your shell has no network, no HOME and no git credentials: never try `git push`, `gh`, `curl` or any other route. If a gh_* tool refuses, read the reason, fix exactly what it says and call again; if it cannot be fixed, stop and report the refusal text.
+All GitHub access goes ONLY through the gh_* tools (gh_repo_info, gh_search, gh_get_file, gh_fork, gh_clone, gh_branch, gh_setup_env, gh_push, gh_issue_create, gh_pr_create). Your shell has no network, no HOME and no git credentials: never try `git push`, `gh`, `curl` or any other route. If a gh_* tool refuses, read the reason, fix exactly what it says and call again; if it cannot be fixed, stop and report the refusal text.
 
 {mode}
 {comp}
@@ -82,8 +82,8 @@ Steps, in order:
 5. Duplicate check: gh_search with at least 4 DIFFERENT queries (error text, function name, symptom in plain words, file path), for issues AND for prs. Open and closed are both searched. If an issue or PR for this bug exists, drop the candidate and pick another.
 6. Write `reports/{name}_issues.md` in your working directory (NOT inside the clone), using the template in the oss-contribution skill (references/issues-file-template.md): the line `Component reviewed: <path>`, one `## Candidate N: title` section per candidate with your duplicate-search table, and the decision.
 7. gh_issue_create with a title and a body (steps to reproduce, expected, actual, file:line).
-8. In the clone: `git checkout -b fix/<issue-number>-<short-slug> upstream/<default branch>`. Make the smallest possible fix and add a test that fails before the fix and passes after.
-9. Run the project's own lint/format command and its test suite in the clone with bash. Both must exit 0; fix what they report.
+8. gh_branch {{repo_dir: "{name}", name: "fix/<issue-number>-<short-slug>"}} (it fetches upstream and branches from the default branch: do not use git fetch or git checkout -b in bash, there is no network), then gh_setup_env {{repo_dir: "{name}"}}, which returns a COMMAND PREFIX. Make the smallest possible fix and add a test that fails before the fix and passes after.
+9. Run the project's own lint/format command and its test suite in the clone with bash, through that prefix (`cd {name} && <prefix> pytest -q -p no:cacheprovider`, `<prefix> ruff check .`). Both must exit 0; fix what they report.
 10. Commit with `git commit -m "<one line, imperative, at most 72 characters>"`: no body, no trailers, no Co-Authored-By or Signed-off-by, no mention of tools or AI, never --amend or rebase. The commit identity is already set by gh_clone.
 11. Competing check: gh_search prs for the issue number and key words.
 12. gh_push {{repo_dir: "{name}", branch: "<branch>"}} (plain push, never force), then gh_pr_create (base = the upstream default branch, title like the commit line, body from the repo's PR template with `Fixes #<issue number>`).

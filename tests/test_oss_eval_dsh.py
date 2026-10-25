@@ -103,8 +103,8 @@ def bash(cmd):
     return {"tool": "bash", "args": {"description": "step", "command": cmd}}
 
 
-def gh(name, **args):
-    return {"tool": name, "args": args}
+def gh(tool, /, **args):
+    return {"tool": tool, "args": args}
 
 
 def skill(name):
@@ -120,7 +120,7 @@ LINT_TEST = bash("cd proj && make lint && make test")
 
 
 def fix_cmd(branch):
-    return (f"cd proj && git checkout -q -b {branch} upstream/main && "
+    return ("cd proj && "
             "sed -i 's|return sum(xs) / len(xs)|return sum(xs) / len(xs) if xs else 0|' src/app.py && "
             "cat >> tests/test_app.py <<'EOF'\n\n\nclass TestEmpty(unittest.TestCase):\n    def test_empty(self):\n"
             "        self.assertEqual(average([]), 0)\nEOF")
@@ -143,6 +143,7 @@ def good_script(issue=900001, branch=BRANCH, searches=SEARCHES, commit=None, ext
     if not skip_issue:
         steps.append(gh("gh_issue_create", repo="up/proj", title="average() raises ZeroDivisionError on an empty list",
                         body="Steps: call average([]).\nExpected: 0 or a clear error.\nActual: ZeroDivisionError.\nWhere: src/app.py:2"))
+    steps.append(gh("gh_branch", repo_dir="proj", name=branch))        # server-side fetch + checkout: bash has no network
     steps.append(bash(fix_cmd(branch)))
     if lint_test:
         steps.append(LINT_TEST)

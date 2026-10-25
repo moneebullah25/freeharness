@@ -18,8 +18,9 @@ freeharness eval --suite oss                                                    
 One real repository, one component (`--component`, or the model picks one small module). Using the `oss-contribution` skill and
 the agency review skills the agent must: read the repo's rules (`gh_repo_info`, CONTRIBUTING, templates); fork and clone; find ONE
 real bug and reproduce it; prove nobody filed it (open and closed, at least 4 different `gh_search` queries, issues and PRs);
-write `reports/<repo>_issues.md`; draft the issue (`gh_issue_create`); branch off the upstream default, fix it minimally with a
-test; run the project's own lint and test commands; commit one line with no trailers; `gh_push`; `gh_pr_create` with `Fixes #N`.
+write `reports/<repo>_issues.md`; draft the issue (`gh_issue_create`); `gh_branch` (server-side fetch of upstream and a branch off its default; bash has no network) and `gh_setup_env` (a venv from the repo's
+declared test/lint dependencies, which returns the command prefix); fix it minimally with a
+test; run the project's own lint and test commands through that prefix (`python`, `pytest`, `ruff`, ... also exist in bash: the standard toolchain); commit one line with no trailers; `gh_push`; `gh_pr_create` with `Fixes #N`.
 The prompt is saved as `prompt.md`. The agent's shell has no network and no `$HOME`, so all GitHub access is through the gate
 (`docs/GITHUB_GATE.md`).
 
@@ -94,7 +95,10 @@ checklist into a success; the judge can only hold a passing run back, and approv
   project's *own* command or that the test is meaningful; that the report names a candidate, not that the bug is real or valid.
   Whether the bug is real and the fix correct is what you review.
 * Test/lint recognition is a list of common runners (anchored on the command, not substrings). An unusual project command is not
-  recognised and the item fails: false fails are possible, false passes need a real command that exited 0.
+  recognised and the item fails: false fails are possible, false passes need a real command that exited 0. A tool run through the
+  venv `gh_setup_env` hands out counts like the bare tool: `PYTHONPATH=... <venv>/bin/python -m pytest|ruff|flake8|black|isort|mypy|pre_commit|coverage run -m pytest`
+  and `<venv>/bin/pytest` are normalised to the tool name (leading `VAR=value`, interpreter path and `-m` are stripped); the exit code still decides.
+  Dry runs and live runs are judged the same way. The judge does not check that the command used the venv, only that a recognised command exited 0.
 * `skills_used` and `report_file` rely on what the agent did, not on the quality of the review.
 * Dry-run PR drafts validate against the local clone and placeholder numbers; the live PR checks (fork branch SHA, GitHub compare view,
   real issue state) only run live. Live behaviour against real GitHub (rate limits, abuse detection) was not exercised: tests use

@@ -78,7 +78,13 @@ are refused).
   our runner replaces dsh's runner chain). macOS and Windows: bash calls are refused, not run unconfined.
 - Denylist, not allowlist: hidden are `$HOME`, `/root`, `/mnt`, `/media`, `/srv`, `/tmp`, `/var/tmp`, `/run`.
   The rest of the host (`/etc`, `/opt`, `/var`, `/usr`...) stays readable by bash. Toolchains under `$HOME` are
-  invisible to bash unless listed in `FREEHARNESS_SANDBOX_RO` (colon-separated, mounted read-only).
+  invisible to bash unless listed in `FREEHARNESS_SANDBOX_RO` (colon-separated, mounted read-only). Two
+  read-only additions are made automatically, each exposing one directory and nothing around it: the standard
+  toolchain venv (`<data>/toolchain-venv`, `freeharness toolchain install`; its `bin/` goes first on PATH, which is
+  where bash gets `python`, `python3`, `pytest`, `ruff`, `flake8`, `black`, `isort`, `mypy`, `pre-commit`, `coverage`)
+  and the install of the Node that dsh runs on when it is not on a system path (an nvm install under `$HOME`;
+  `node`, `npm`). Extra tool roots: `FH_SANDBOX_TOOLS=/a:/b`. `tree`, `make`, `jq`, `git`, `grep`, `sed`, `awk`,
+  `find`, `curl` are used as the host has them (`/usr/bin`); there is still no network.
 - The read fence covers `read`, `read_image`, `grep`, `glob`. It is a path check in the dsh process, not a kernel
   boundary; MCP servers (the vault) and any other tool are not covered. If the guard plugin fails to load, the
   client refuses to start (it checks dsh's report), but a dsh launched without the freeharness client has no fence.

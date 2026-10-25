@@ -6,6 +6,7 @@ freeharness: a terminal coding agent (DeepSeek Harness) on free web-chat backend
     freeharness setup                install Node + the pinned harness (once)
     freeharness login [site ...]     sign in to chat sites (once)
     freeharness doctor [--report]    check prerequisites
+    freeharness toolchain install    pytest, ruff, ... for the agent's sandboxed bash (also run by setup; `status` to check)
     freeharness serve                run only the OpenAI-compatible shim
     freeharness eval --model NAME    gate a provider with the tool-use eval
     freeharness transcript [id]      list / print the readable record of past sessions
@@ -23,7 +24,7 @@ import sys
 
 from . import __version__
 
-SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "review", "vault", "github", "transcript", "memory", "sessions", "agents", "oss", "version")
+SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "review", "vault", "github", "transcript", "memory", "sessions", "agents", "oss", "toolchain", "version")
 
 
 def main(argv=None) -> int:
@@ -59,6 +60,9 @@ def main(argv=None) -> int:
         return run(rest)
     if cmd == "github":
         from .github_cmd import main as run
+        return run(rest)
+    if cmd == "toolchain":
+        from .toolchain import main as run
         return run(rest)
     if cmd == "doctor":
         from .doctor import main as run

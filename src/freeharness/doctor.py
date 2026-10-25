@@ -40,6 +40,9 @@ def checks() -> list[tuple[str, str, str]]:
         "" if rpc.DSH_BIN.exists() else "run `freeharness setup`")
     st = security.probe()          # measured with a canary file and a loopback listener, not assumed
     add({"full": OK, "partial": WARN}.get(st.level, FAIL), f"bash sandbox: {st.level}", st.detail)
+    tl, tdetail = security.probe_toolchain()
+    add(OK if tl == "full" else WARN, f"standard toolchain: {tl}",
+        tdetail if tl == "full" else tdetail + (" (bash then has no pytest/ruff/python)" if tl == "missing" else ""))
     add(OK, "read/grep/glob fence", "fh-guard plugin: home, /tmp, /run unreadable outside the workspace "
         "(a policy fence inside dsh, not a kernel boundary)")
     from . import github_cmd

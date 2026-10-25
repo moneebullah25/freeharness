@@ -49,13 +49,14 @@ Numbers match SKILL.md. Read only the step you are on.
 - Use the repo's issue template. Title: short and specific. Body: steps to reproduce, expected, actual, version or commit, file:line.
 
 ## 8 to 11 Branch, fix, conventions, tests
-- Branch from the upstream default branch (not from your fork's stale copy): update first, then branch fix/<issue-number>-<short-slug>.
+- gh_branch(repo_dir, "fix/<issue-number>-<short-slug>") does the fetch and the branch. Bash has no network, so a fetch there fails and a chained checkout is skipped. It refuses the default branch name, odd names and a dirty tree (commit or discard first).
+- gh_setup_env(repo_dir) builds a venv outside the clone from the repo's declared test/lint dependencies and prints a COMMAND PREFIX (PYTHONPATH and the venv python). Use `extras` (for example "test,lint") to pick a declared group or requirements file. It lists skipped lines (URLs, -e, custom indexes). A refusal or a WARNING in its text: report it, do not try to pip install by hand (no network).
 - Change only what the issue needs. No drive-by cleanups, no renames, no formatting of untouched lines.
 - Commit message: one line, imperative mood, under 72 characters, match the style of `git log --oneline`. No body trailers,
   no Co-Authored-By, no Signed-off-by unless the user says so, no mention of AI or tools.
-- Run the project's own lint and formatter on changed files and fix what they report. Match nearby code.
+- Run the project's own lint and formatter on changed files through the prefix (`cd <clone> && <prefix> ruff check <files>`, `<prefix> black --check <files>`) and fix what they report. Match nearby code.
 - Add a test that fails before the fix and passes after. Run the whole test file or suite the project documents.
-  Paste the real output in your report to the user. If tests cannot run here, say so.
+  Run them as `cd <clone> && <prefix> pytest -q -p no:cacheprovider <file>`. Paste the real output in your report to the user. If tests cannot run here, say so.
 
 ## 12 Competing PRs
 - gh_search PRs (open and closed) with the issue number and with key words. gh_list_pr_files on any hit that looks related.

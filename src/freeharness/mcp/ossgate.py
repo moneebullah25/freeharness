@@ -9,7 +9,9 @@ skipping the checks that need a real issue (state, assignees, search by number, 
 open-PR file-overlap scan and every other gate. A placeholder can never satisfy a live run: live mode never
 reads the file, and a placeholder number does not exist on GitHub.
 
-Everything else is inherited unchanged from ghgate.Gate (draft review, markers, evidence, push rules, ...).
+Everything else is inherited unchanged from ghgate.Gate (draft review, markers, evidence, push rules, ...), including
+gh_branch and gh_setup_env: neither writes to GitHub, so a dry run performs them for real (a fetch of upstream; a pip install
+in the install sandbox), and the judge's lint_tests_run then sees the venv-prefixed pytest/ruff calls the agent makes.
 """
 from __future__ import annotations
 

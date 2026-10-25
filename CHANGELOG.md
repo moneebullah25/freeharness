@@ -8,6 +8,17 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Added
+- GitHub gate tools `gh_branch` (server-side fetch of upstream + `checkout -b` from its default branch; refuses the default
+  branch name, unsafe names, a dirty tree, an existing branch) and `gh_setup_env` (a per-project venv outside the clone from the
+  repo's own declared test/lint dependencies, read from upstream's committed files; unsafe lines skipped and listed; pip runs
+  inside a bubblewrap sandbox with network and nothing else, timeout and output cap, fail closed without bwrap; returns the exact
+  command prefix to run pytest/ruff in bash). The gate now has 14 tools. New modules `depfiles.py`, `toolchain.py`.
+- Standard toolchain: `freeharness toolchain install|status` (also run by `setup`) builds `<data>/toolchain-venv` with pinned
+  pytest, coverage, ruff, flake8, black, isort, mypy, pre-commit, pip, setuptools, wheel, build. The sandbox runner binds it
+  read-only and puts its `bin/` first on PATH, so bash has `python`, `python3` and these tools with no per-run install; the Node
+  dsh runs on (when under `$HOME`) is exposed read-only the same way (`FH_SANDBOX_TOOLS` for more). `doctor` reports
+  `standard toolchain: full | partial | missing` from real runs inside the sandbox.
+- OSS judge: `lint_tests_run` recognises `pre_commit` and `coverage run -m pytest` through the venv prefix (evidence tests added).
 - OSS-contribution evaluation: `freeharness oss run <owner/repo> [--component NAME] [--models a,b] [--live] [--max-steps N]`,
   `oss report <run-id> [--judge]`, `oss list`, and `freeharness eval --suite oss` (lists it, never runs it). One run directory
   `<state>/oss/<run-id>/` (prompt, config, clone workspace, the gate's evidence and drafts, transcript, `calls.jsonl`, live

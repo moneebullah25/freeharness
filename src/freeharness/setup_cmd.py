@@ -6,6 +6,7 @@
      SHASUMS256.txt. Nothing is installed system-wide.
   2. The pinned DeepSeek Harness, from the committed package-lock.json (`npm ci`),
      into the data directory. Install scripts are disabled.
+  3. The standard toolchain venv (pytest, ruff, ... pinned; see toolchain.py). A failure only warns.
 """
 from __future__ import annotations
 
@@ -114,6 +115,13 @@ def main(argv=None) -> int:
     except (RuntimeError, OSError) as e:
         print(f"setup failed: {e}", file=sys.stderr)
         return 1
+    try:
+        from . import toolchain
+        print("installing the standard toolchain for the bash sandbox (pytest, ruff, ... ; `freeharness toolchain install` to redo)...")
+        toolchain.install()
+    except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+        print(f"toolchain not installed (the agent's bash then has no pytest/ruff/python): {e}\n"
+              "  retry with `freeharness toolchain install`", file=sys.stderr)
     try:
         from . import memory_cmd
         memory_cmd.enable()

@@ -66,7 +66,7 @@ tests, competing-PR check, PR with the repo template and `Fixes #N`, review fixe
 reply with the SHA, then resolve. `SKILL.md` stays under 3,500 characters; per-step detail is in `references/`.
 
 It relies on the `gh_*` tools of the `ghgate` MCP server (gh_repo_info, gh_search, gh_get_file, gh_list_pr_files,
-gh_pr_threads, gh_fork, gh_clone, gh_push, gh_issue_create, gh_pr_create, gh_pr_reply, gh_pr_resolve_thread). Those tools
+gh_pr_threads, gh_fork, gh_clone, gh_branch, gh_setup_env, gh_push, gh_issue_create, gh_pr_create, gh_pr_reply, gh_pr_resolve_thread). Those tools
 enforce the hard rules; the skill tells the model that a refusal means stop and report, never work around it. The skill
 cannot enforce anything itself: without `ghgate` it is only advice.
 

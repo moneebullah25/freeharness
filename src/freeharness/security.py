@@ -40,9 +40,30 @@ def runner_command() -> list[str]:
     return [sys.executable, str(RUNNER)]
 
 
+def tool_roots() -> list[str]:
+    """Host tool installs the sandbox may read (read-only): the Node dsh itself runs on, when it is not on a system
+    path. Only that one install directory is exposed, never its parent or $HOME. Extra roots: FH_SANDBOX_TOOLS=/a:/b."""
+    roots = [r for r in os.environ.get("FH_SANDBOX_TOOLS", "").split(":") if r]
+    try:
+        from .client import rpc                       # lazy: rpc imports this module
+        roots.append(str(Path(rpc.find_node_dir()).parent))
+    except (RuntimeError, ImportError, OSError):
+        pass
+    return list(dict.fromkeys(roots))
+
+
 def dsh_env() -> dict[str, str]:
-    """Environment the dsh patch reads (see dsh.patch.yml): where the sandbox runner lives."""
-    return {"FH_SANDBOX_RUNNER": json.dumps(runner_command())}
+    """Environment the dsh patch and the sandbox runner read: where the runner lives, the standard toolchain venv
+    (bound read-only, bin/ first on PATH) and extra read-only tool roots."""
+    from . import toolchain
+    env = {"FH_SANDBOX_RUNNER": json.dumps(runner_command())}
+    tc = toolchain.toolchain_dir()
+    if (tc / "pyvenv.cfg").is_file():
+        env["FH_TOOLCHAIN"] = str(tc)
+    roots = tool_roots()
+    if roots:
+        env["FH_SANDBOX_TOOLS"] = ":".join(roots)
+    return env
 
 
 def guard_patch(directory: Path) -> Path:
@@ -80,7 +101,8 @@ def _run_confined(cmd: str, workspace: Path, writable: bool = True, timeout: flo
     if writable:
         profile += ["--tmpfs", "/tmp", "--bind", str(workspace), str(workspace)]  # noqa: S108
     argv = [*runner_command(), *profile, "--", "bash", "-c", cmd]
-    return subprocess.run(argv, cwd=workspace, capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(argv, cwd=workspace, capture_output=True, text=True, timeout=timeout,
+                          env={**os.environ, **dsh_env()})
 
 
 def probe() -> SandboxStatus:
@@ -150,3 +172,31 @@ def probe() -> SandboxStatus:
     if not bad:
         return SandboxStatus("full", "bwrap: workspace-only writes, home and /tmp hidden, no network (bash tool only)", checks)
     return SandboxStatus("partial", "sandbox starts but does not enforce: " + ", ".join(bad), checks)
+
+
+
+def probe_toolchain() -> tuple[str, str]:
+    """("full" | "partial" | "missing", detail): is the standard toolchain installed AND does it work inside the bash
+    sandbox? Measured by running `command -v` for every tool and `pytest --version` through the same runner dsh uses."""
+    from . import toolchain
+    level, detail, _ = toolchain.status()
+    if level == "missing":
+        return "missing", detail
+    if sys.platform != "linux" or not shutil.which("bwrap"):
+        return "partial", f"installed ({detail}) but the bash sandbox is unavailable, so it cannot be used"
+    ws = Path(tempfile.mkdtemp(prefix="fh-probe-tc-"))
+    try:
+        cmd = ("for c in " + " ".join(toolchain.COMMANDS) + "; do printf '%s=%s\\n' $c \"$(command -v $c)\"; done; "
+               "for c in " + " ".join(toolchain.RUN_CHECK) + "; do $c --version >/dev/null 2>&1 && echo ran:$c; done")
+        r = _run_confined(cmd, ws)
+    except (OSError, subprocess.SubprocessError) as e:
+        return "partial", f"installed but the sandbox run failed: {e}"
+    finally:
+        shutil.rmtree(ws, ignore_errors=True)
+    tc = str(toolchain.toolchain_dir())
+    found = dict(ln.split("=", 1) for ln in r.stdout.splitlines() if "=" in ln)
+    bad = [c for c in toolchain.COMMANDS if not found.get(c, "").startswith(tc + "/bin/")]
+    bad += [f"{c} --version" for c in toolchain.RUN_CHECK if f"ran:{c}" not in r.stdout]
+    if level != "full" or bad:
+        return "partial", ("; ".join(([detail] if level != "full" else []) + ([f"not on the sandbox PATH or not working: {', '.join(bad)}"] if bad else [])))[:300]
+    return "full", f"in the bash sandbox: {detail}"
