@@ -390,6 +390,29 @@ def test_plain_answer_passes_through_and_no_tools_means_no_parsing():
 
 # --------------------------------------------------------------------- router
 
+def test_sticky_continues_on_the_provider_that_took_over():
+    a, b = FakeSession(), FakeSession()
+    sess = {"gemini": a, "qwen": b}
+    r = shim.Router(["gemini", "qwen"], lambda prov: sess[prov.key], clock=Clock(), log=lambda m: None,
+                    sticky=["gemini", "qwen"])
+    r.fault = shim.parse_fault("gemini:2")
+    reply = shim.parse_reply("```tool_call\n" + BLOCK + "\n```", [BLOCK], TOOLS_S)[1]
+    for step, expect in ((0, "gemini"), (1, "qwen"), (2, "qwen")):
+        m = convo(step)
+        got = [ev for ev in r.run("auto", shim.render_prompt(m, TOOLS_S), messages=m, tools=TOOLS_S)]
+        assert ("provider", expect) in got, (step, got[:2])
+        r.note_reply(expect, "", reply)
+    assert a.fresh_flags == [True] and b.fresh_flags == [True, False], "qwen: full history once, then only the delta"
+    assert len(b.prompts[1]) < len(b.prompts[0])
+    assert r.status()["gemini"]["cooldown_s"] > 0
+    print("  sticky: takeover continues ok")
+
+
+def test_fault_spec_parsing():
+    assert shim.parse_fault("gemini:3, qwen:1") == {"gemini": 3, "qwen": 1}
+    assert shim.parse_fault("junk,x:y") == {} and shim.parse_fault(None) == {}
+
+
 def test_failover_to_next_provider_and_cooldown():
     g = FakeSession(error=RuntimeError("Gemini returned an error page: you've reached your limit"))
     p = FakeSession(reply="from perplexity")

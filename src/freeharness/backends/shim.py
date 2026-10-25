@@ -340,6 +340,17 @@ def classify(exc: Exception) -> str:
     return "error"
 
 
+def parse_fault(spec):
+    """FREEHARNESS_FAULT="gemini:3" makes gemini's 3rd request fail with a quota error, so failover
+    can be exercised live without waiting for a real limit. Unset in normal use."""
+    out = {}
+    for part in (spec or "").split(","):
+        key, _, n = part.partition(":")
+        if key.strip() and n.strip().isdigit():
+            out[key.strip()] = int(n)
+    return out
+
+
 class Router:
     """Owns one lazily-created Session per provider and the cooldown ledger."""
 
@@ -354,6 +365,8 @@ class Router:
         # Providers allowed to continue ONE chat across requests (send only what is new).
         self.sticky = set(sticky)
         self.threads: dict[str, dict] = {}     # provider -> what its current chat has seen
+        self.fault = parse_fault(os.environ.get("FREEHARNESS_FAULT"))   # test hook: {provider: Nth request fails}
+        self.requests: dict[str, int] = {}
 
     def status(self) -> dict:
         now = self.clock()
@@ -451,6 +464,9 @@ class Router:
                 self.log(f"shim: -> {key} ({len(send):,} chars{'' if fresh else ', same chat'})")
                 self.threads.pop(key, None)            # unknown until this request finishes cleanly
                 yield ("provider", key)
+                self.requests[key] = self.requests.get(key, 0) + 1
+                if self.fault.get(key) == self.requests[key]:
+                    raise RuntimeError("You've reached your limit (injected quota fault)")
                 for ev in sess.ask(send, fresh=fresh, should_stop=should_stop):
                     if "t" in ev:
                         started = True
