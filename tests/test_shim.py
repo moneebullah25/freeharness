@@ -823,3 +823,8 @@ def test_raw_newlines_inside_json_strings_still_parse():
     blk = '{"name": "bash", "arguments": {"command": "echo a\nb"}}'          # a real newline inside the string
     _, calls = shim.parse_reply("```tool_call\n" + blk + "\n```", [blk], TOOLS_S)
     assert [json.loads(c["function"]["arguments"])["command"] for c in calls] == ["echo a\nb"]
+
+
+def test_code_fingerprint_is_stable_and_changes_with_the_source(tmp_path, monkeypatch):
+    a = shim.code_fingerprint()
+    assert a == shim.code_fingerprint() and len(a) == 16

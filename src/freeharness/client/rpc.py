@@ -19,6 +19,7 @@ import os
 import queue
 import re
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -99,11 +100,45 @@ def _rotate(log: Path):
         pass
 
 
-def ensure_shim(providers: str = "gemini", wait: float = 30.0, sticky: str = "") -> subprocess.Popen | None:
+def _stop_stale_shim(health: dict) -> bool:
+    """SIGTERM a shim of OURS whose code differs from the installed code. True if it went away."""
+    pid = health.get("pid")
+    if not isinstance(pid, int) or pid <= 1:
+        return False
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+    except OSError:
+        return False
+    if "freeharness.backends.shim" not in cmdline:
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return False
+    for _ in range(40):
+        if not shim_health(0.5):
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def ensure_shim(providers: str = "gemini", wait: float = 30.0, sticky: str = "",
+                restart_stale: bool = False) -> subprocess.Popen | None:
     """Start the OpenAI-compatible shim unless one is already answering.
-    Returns the process only if WE started it (so the caller knows to stop it)."""
-    if shim_health():
-        return None
+    Returns the process only if WE started it (so the caller knows to stop it).
+    A shim started before the installed code changed is stale: with `restart_stale` (batch runs such as
+    eval and oss) it is replaced, otherwise a warning is printed and it is kept (it may be serving a
+    live chat)."""
+    health = shim_health()
+    if health:
+        from ..backends.shim import code_fingerprint
+        if health.get("code") != code_fingerprint():          # a shim without the field predates it: stale too
+            if not (restart_stale and _stop_stale_shim(health)):
+                sys.stderr.write("warning: the running shim was started before the code changed; "
+                                 "stop it so the new code takes effect\n")
+                return None
+        else:
+            return None
     logdir = paths.private_dir(paths.log_dir())
     logfile = logdir / "shim.log"
     _rotate(logfile)

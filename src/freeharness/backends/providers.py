@@ -107,8 +107,11 @@ GEMINI = Provider(
     # stop button was present, i.e. Gemini was thinking, not failing. Steps take
     # 15-60s normally, so give it room instead of cooling the provider for being slow.
     reply_timeout=240, answer_timeout=240,
+    # MEASURED (OSS run, 2026-10-25): a 58k-char prompt got "I encountered an error doing what you
+    # asked" while steps of 8-12k chars were fine. Trim (shim.fit_messages) well before that.
+    max_prompt=30_000,
     errors=("something went wrong", "you've reached your limit", "try again later",
-            "can't help with that", "i can't help"),
+            "can't help with that", "i can't help", "i encountered an error doing what you asked"),
     # `model-response` also holds UI chrome ("Show code", "Gemini said", "Processed
     # and analyzed in code"); its `message-content` child is just the answer.
     sel={

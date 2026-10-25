@@ -190,7 +190,7 @@ def main(argv=None) -> int:
         sys.exit(f"unknown task(s) {unknown}; see --list")
 
     providers = "gemini,qwen" if args.model == "auto" else args.model
-    shim = None if args.no_shim else ensure_shim(providers, sticky=providers if args.sticky else "none")
+    shim = None if args.no_shim else ensure_shim(providers, sticky=providers if args.sticky else "none", restart_stale=True)
     results = []
     try:
         for _rep in range(args.repeat):

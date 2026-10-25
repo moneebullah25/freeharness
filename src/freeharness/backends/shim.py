@@ -39,6 +39,7 @@ import sys
 import threading
 import time
 import uuid
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -411,6 +412,19 @@ def classify(exc: Exception) -> str:
     return "error"
 
 
+def code_fingerprint() -> str:
+    """Hash of the source files that decide what the shim does, so a client can tell a stale shim
+    (started before an upgrade or fix) from the current code."""
+    h = hashlib.sha256()
+    here = Path(__file__).parent
+    for name in ("shim.py", "providers.py", "bridge.py"):
+        try:
+            h.update((here / name).read_bytes())
+        except OSError:
+            h.update(name.encode())
+    return h.hexdigest()[:16]
+
+
 def parse_fault(spec):
     """FREEHARNESS_FAULT="gemini:3" makes gemini's 3rd request fail with a quota error, so failover
     can be exercised live without waiting for a real limit. Unset in normal use."""
@@ -719,7 +733,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"object": "list", "data": [
                 {"id": i, "object": "model", "owned_by": "shim"} for i in ids]})
         elif path == "/health":
-            self._send_json({"ok": True, "providers": self.router.status()})
+            self._send_json({"ok": True, "providers": self.router.status(), "pid": os.getpid(), "code": code_fingerprint()})
         else:
             self.send_error(404)
 

@@ -410,7 +410,7 @@ def execute(rd: oj.RunDir, repo: str, models: list[str], live: bool, max_steps: 
     repair_left = max(0, repair)
     try:
         if not no_shim:
-            shim = rpc.ensure_shim(_provider_list(models, providers), sticky="auto")
+            shim = rpc.ensure_shim(_provider_list(models, providers), sticky="auto", restart_stale=True)
         try:
             sessions.touch(sid, str(rd.workspace), rt.model)
             sessions.set_active(str(rd.workspace), sid)
