@@ -571,6 +571,8 @@ class Gate:
                 raise Refuse("repo is required (owner/name), e.g. repo=\"piccolo-orm/piccolo\"")
             repo = m.group(1)
         repo = self._repo(repo)
+        kind = {"issue": "issues", "pr": "prs", "pull": "prs", "pulls": "prs", "pull_request": "prs",
+                "pull_requests": "prs"}.get(str(kind).strip().lower(), str(kind).strip().lower())
         if kind not in ("issues", "prs"):
             raise Refuse("kind must be issues or prs")
         clean = re.sub(r"(?i)(?:^|\s)-?(?:repo|org|user|is|state|type|archived|no):\S*", " ", _text(query, "query"))
