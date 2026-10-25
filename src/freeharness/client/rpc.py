@@ -27,7 +27,7 @@ from pathlib import Path
 
 import sys
 
-from .. import auth, paths
+from .. import auth, paths, security
 
 DSH_BIN = paths.harness_dir() / "node_modules" / ".bin" / ("dsh.cmd" if sys.platform == "win32" else "dsh")
 DSH_HOME = paths.dsh_home()
@@ -137,10 +137,11 @@ class TurnResult:
 class Runtime:
     def __init__(self, cwd: str | Path, provider: str = "bridge", model: str = "auto",
                  home: Path = DSH_HOME, patch: Path = PATCH, init_timeout: float = 90.0,
-                 overlay_files: list | None = None):
+                 overlay_files: list | None = None, approver=None):
         self.cwd, self.provider, self.model = str(Path(cwd).resolve()), provider, model
         self.home, self.patch, self.init_timeout = Path(home), Path(patch), init_timeout
         self.overlay_files = overlay_files            # None = the user's overlay.d; a list replaces it (hermetic runs)
+        self.approver = approver        # client.approval.Approver, or None: approval requests are then refused (policy never)
         self.events: queue.Queue = queue.Queue()      # (method, params) | ("__exit__", {...})
         self.stderr_tail = collections.deque(maxlen=40)
         self._proc: subprocess.Popen | None = None
@@ -158,8 +159,14 @@ class Runtime:
         env["DSH_PERMISSION_MODE"] = "workspace-write"
         env["FREEHARNESS_CWD"] = self.cwd                 # the memory MCP server scopes project facts by it
         env["PATH"] = find_node_dir() + os.pathsep + env.get("PATH", "")
-        cmd = [str(DSH_BIN), "--profile", "sdk", "--patch", str(self.patch)]
-        for extra in (self.overlays() if self.overlay_files is None else self.overlay_files):                     # user MCP servers etc.: <config>/overlay.d/*.yml
+        env.update(security.dsh_env())                    # sandbox runner + guard plugin (see security.py)
+        cmd = [str(DSH_BIN), "--profile", "sdk", "--patch", str(self.patch),
+               "--patch", str(security.guard_patch(paths.private_dir(paths.state_dir()) / "dsh"))]
+        if self.approver:                                 # a human can answer: ask instead of never
+            self.approver.start()
+            env.update(self.approver.env())
+        cmd += ["--patch", str(self.approver.patch if self.approver else security.APPROVAL_NEVER)]
+        for extra in (self.overlays() if self.overlay_files is None else self.overlay_files):  # <config>/overlay.d/*.yml
             cmd += ["--patch", str(extra)]
         # A fresh queue per process: the previous process's reader finishes late
         # and must not post its exit into (or fail requests of) this one.
@@ -179,6 +186,9 @@ class Runtime:
             try:
                 self.request("initialize", {"cwd": self.cwd, "provider": self.provider,
                                             "model": self.model}, timeout=self.init_timeout)
+                if security.guard_failed(self.stderr_tail):      # fail closed: no fence, no approval relay
+                    self.close()
+                    raise RuntimeError("the freeharness guard plugin did not load: " + self.diagnose(""))
                 return
             except RpcError as e:
                 if "no adapter" not in e.message and "not initialized" not in e.message:
@@ -196,6 +206,8 @@ class Runtime:
         proc, self._proc = self._proc, None
         if not proc:
             return
+        if self.approver:
+            self.approver.close()
         try:
             if proc.poll() is None:
                 try:
@@ -264,6 +276,8 @@ class Runtime:
                 continue
             ev = params["event"]
             seen.append(ev)
+            if self.approver:
+                self.approver.observe(ev)
             d, t = ev.get("data") or {}, ev.get("type")
             if t == "step/start":
                 steps += 1

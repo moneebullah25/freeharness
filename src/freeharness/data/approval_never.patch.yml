@@ -1,0 +1,17 @@
+# Applied when the client has no human to ask (`-p`, eval, tests): a request that needs approval
+# (a sandbox escalation) is refused at once and the model is told not to ask. The interactive
+# client replaces this with a generated `ask` patch plus an answerer (client/approval.py).
+# The `permission` row re-pins fresh sessions to its preset's own approval, so both rows move.
+- id: approval
+  config:
+    policy: never
+- id: permission
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: never
+      workspace-write:
+        sandbox: workspace-write
+        approval: never
+    defaultPreset: workspace-write

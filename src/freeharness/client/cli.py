@@ -24,6 +24,7 @@ from rich.rule import Rule
 
 from .. import memory, memory_cmd, paths, sessions
 from ..transcript import Transcript
+from .approval import TerminalApprover
 from .render import Renderer, turn_outcome
 from .rpc import (DSH_HOME, Runtime, RuntimeDied, RpcError, ensure_shim,
                   shim_health)
@@ -56,7 +57,9 @@ def saved_sessions() -> list[str]:
 class App:
     def __init__(self, args, console: Console):
         self.args, self.c = args, console
-        self.rt = Runtime(args.cwd, model=args.model)
+        # Only a person at a terminal can approve (y/N, default no); `-p` has nobody to ask, so dsh refuses.
+        self.approver = None if args.prompt else TerminalApprover(console)
+        self.rt = Runtime(args.cwd, model=args.model, approver=self.approver)
         self.sid = args.resume or self.continue_id() or new_session_id()
         self.shim_proc = None
         self.resumed = bool(args.resume) or self._continued
@@ -127,6 +130,8 @@ class App:
         label = {"text": "waiting for the model…"}
         started = time.monotonic()
         with self.c.status(label["text"]) as status:
+            if self.approver:
+                self.approver.status = status               # paused while the approval question is asked
             def on_event(ev):
                 self.tr.event(ev)
                 new = rend.handle(ev)

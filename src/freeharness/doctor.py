@@ -13,7 +13,7 @@ import socket
 import stat
 import sys
 
-from . import __version__, logs, paths
+from . import __version__, logs, paths, security
 from .client import rpc
 from .login_cmd import find_chrome, status_by_site
 
@@ -38,6 +38,10 @@ def checks() -> list[tuple[str, str, str]]:
         add(FAIL, f"node >= {rpc.MIN_NODE[0]}.{rpc.MIN_NODE[1]}", "run `freeharness setup`")
     add(OK if rpc.DSH_BIN.exists() else FAIL, "DeepSeek Harness installed",
         "" if rpc.DSH_BIN.exists() else "run `freeharness setup`")
+    st = security.probe()          # measured with a canary file and a loopback listener, not assumed
+    add({"full": OK, "partial": WARN}.get(st.level, FAIL), f"bash sandbox: {st.level}", st.detail)
+    add(OK, "read/grep/glob fence", "fh-guard plugin: home, /tmp, /run unreadable outside the workspace "
+        "(a policy fence inside dsh, not a kernel boundary)")
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         add(WARN, "not running as root", "a browser with your logins should not run as root")
     status = status_by_site()

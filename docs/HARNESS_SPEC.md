@@ -19,8 +19,8 @@ yet proven here, `gap` = nothing yet. Nothing below is marked done until a test 
 | tool_registry / tool_executor | dsh `tools`, `tool-bash`, `tool-fs`, `tool-fs-search`, `tool-str-replace-editor`, `tool-todo`, `tool-skill`, `tool-session-query` | verify (tools agent) |
 | mcp_client | dsh `mcp-client` (one row per server, explicit config) | done (vault) |
 | workflow_engine | dsh `workflow`, `tool-workflow` (model-written fan-out scripts), `goal`, `jobs`; disabled by us for prompt size | gap: no deterministic predefined flows |
-| sandbox_manager | dsh `sandbox`, `sandbox-local` (Linux bwrap/Landlock, fails closed), `sandbox-policy`, `bash-sandbox`, `fs-sandbox` | **verify first**: never configured or tested by us |
-| policy_engine / approval_service | dsh `user-approval` (ask/never, fail-closed, audited), `permission-presets` | **verify first**: sdk profile behaviour with no human answerer |
+| sandbox_manager | dsh `sandbox`, `sandbox-local`, `sandbox-policy`, `bash-sandbox`, `fs-sandbox`; `fh` bwrap runner (no network, home/tmp hidden), `fh` read fence, `security.probe` | **tested (stage 1)**, Linux + bubblewrap only; dsh alone restricts neither reads nor network (measured); same-kernel, not a container |
+| policy_engine / approval_service | dsh `user-approval` (ask/never, fail-closed, audited), `permission-presets`; `fh` terminal answerer over a private socket | **tested (stage 1)**: no answerer = refused at once (not a hang); `-p` = never; interactive = y/N, default no, one call only |
 | evaluation_engine | `fh` `eval/` (deterministic, workspace-judged) | deterministic done; LLM-judge and human review = gap |
 | audit_service / observability | dsh session log, `otel`, `token-meter`, `session-stats`; `fh` rotating logs | verify; redaction = gap |
 | api / frontend | dsh `api-gateway`, `host-webserver`, `web-app`; `fh` terminal client | gap: no task API/UI for freeharness (decision needed) |
@@ -30,13 +30,13 @@ yet proven here, `gap` = nothing yet. Nothing below is marked done until a test 
 | # | Criterion | Status |
 |---|---|---|
 | 1 | Task ID | session id exists; no "task" object |
-| 2 | Model calls validated/authorized by harness | tool schemas validated by dsh; authorization depends on sandbox/approval config (unproven) |
+| 2 | Model calls validated/authorized by harness | tool schemas validated by dsh; file/network/privilege authorization tested for bash, write/edit, read/grep/glob (stage 1); other tools (MCP) not covered |
 | 3 | Tool results loop back | proven (evals) |
 | 4 | Persistence across restart | dsh sessions proven; scratchpad in progress |
 | 5 | Cross-session memory | in progress |
 | 6 | Workflow branching/parallel/retry/approval | dsh workflow exists but disabled; gap |
-| 7 | Isolated unsafe execution | dsh sandbox exists; unproven; same-world only (not a container) |
-| 8 | Prompt-injection can't bypass permissions | depends on 2 and 7; needs adversarial tests |
+| 7 | Isolated unsafe execution | tested: bash confined by bwrap (workspace-only writes, home/tmp hidden, no network); same-kernel only, NOT a container; Linux+bubblewrap only (fails closed elsewhere) |
+| 8 | Prompt-injection can't bypass permissions | tested for file/network/escalation: an obeying scripted model reading an injected file cannot read the canary, reach the network or self-approve; MCP tools and in-workspace secrets not covered |
 | 9 | Retention, access, redaction | gap (redaction of logs/transcripts/memory) |
 | 10 | Deterministic / LLM / human eval independent | deterministic only |
 | 11 | Bounded repair attempts | dsh step limits; no explicit repair loop |
@@ -47,7 +47,7 @@ yet proven here, `gap` = nothing yet. Nothing below is marked done until a test 
 
 ## Stages
 
-1. **Security baseline (first, highest risk).** Probe real dsh offline: is `ctx.sandbox` mounted in the
+1. **Security baseline (first, highest risk). STATUS: done and tested on Linux with bubblewrap (`tests/test_security.py`); see ARCHITECTURE.md "Security" for what is and is not enforced.** Probe real dsh offline: is `ctx.sandbox` mounted in the
    sdk profile, which mode do bash/write/edit run in, what happens on an approval request with no
    answerer (hang vs fail-closed), can bash read `~/.ssh` or `.env` or reach the network. Configure
    the least-privilege default (workspace-write, ask for wider, network off) in `dsh.patch.yml`;
