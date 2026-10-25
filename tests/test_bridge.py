@@ -371,6 +371,7 @@ def test_landing_on_the_sign_in_page_is_a_login_error_not_a_changed_ui():
 
     s = bridge.Session.__new__(bridge.Session)
     s.p, s.page = providers.PROVIDERS["deepseek"], P()
+    import pytest
     with pytest.raises(RuntimeError) as e:
         s._raise_if_logged_out()
     assert shim.classify(e.value) == "login" and "freeharness login deepseek" in str(e.value)
