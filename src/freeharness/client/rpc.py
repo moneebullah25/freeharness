@@ -151,6 +151,9 @@ class Runtime:
     def start(self):
         paths.private_dir(self.home)
         env = dict(os.environ, DSH_HOME=str(self.home), BRIDGE_KEY=auth.load_or_create_token())
+        # dsh reads its sandbox mode from this variable; an inherited
+        # DSH_PERMISSION_MODE=danger-full-access must not silently widen the trust model.
+        env["DSH_PERMISSION_MODE"] = "workspace-write"
         env["PATH"] = find_node_dir() + os.pathsep + env.get("PATH", "")
         cmd = [str(DSH_BIN), "--profile", "sdk", "--patch", str(self.patch)]
         for extra in self.overlays():                     # user MCP servers etc.: <config>/overlay.d/*.yml
@@ -158,6 +161,8 @@ class Runtime:
         # A fresh queue per process: the previous process's reader finishes late
         # and must not post its exit into (or fail requests of) this one.
         self.events = q = queue.Queue()
+        if not Path(self.cwd).is_dir():
+            raise RuntimeError(f"workspace {self.cwd} is not a directory")
         self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                       stderr=subprocess.PIPE, text=True, cwd=self.cwd, env=env,
                                       start_new_session=True)
@@ -204,6 +209,11 @@ class Runtime:
                     proc.kill()
         self._fail_pending(proc, "runtime closed")
 
+    def abandon(self, session_id: str):
+        """Interrupt = restart + `session/resume` (which closes the interrupted turn)."""
+        self.restart()
+        self.resume(session_id)
+
     def restart(self, model: str | None = None):
         """Abandon whatever is running. The only way to interrupt a turn."""
         self.close()
@@ -218,9 +228,12 @@ class Runtime:
                                                "contentBlocks": [{"type": "text", "text": text}]})["messageId"]
 
     def run_turn(self, session_id: str, text: str, on_event=None, on_tick=None,
-                 timeout: float = 900.0) -> TurnResult:
+                 timeout: float = 900.0, max_steps: int | None = None) -> TurnResult:
         """Send one prompt and block until its turn ends. `on_event(event)` sees
         each log event as it is recorded; `on_tick(elapsed_s)` fires ~4x/second.
+        dsh has no step limit and no cancel, so `max_steps` is enforced here: when
+        the turn starts step max_steps+1 it is abandoned (runtime restarted, session
+        resumed) and a result with reason {"kind": "max_steps", "limit": N} is returned.
         Raises RuntimeDied if the runtime exits, TimeoutError past `timeout`."""
         while True:                                       # stale events of an earlier turn
             try:
@@ -251,6 +264,12 @@ class Runtime:
             d, t = ev.get("data") or {}, ev.get("type")
             if t == "step/start":
                 steps += 1
+                if max_steps and steps > max_steps:
+                    steps -= 1                            # the step we refused to run
+                    self.abandon(session_id)
+                    reason = {"kind": "max_steps", "limit": max_steps}
+                    return TurnResult(False, reason, final, steps, calls, errors,
+                                      time.monotonic() - start, seen)
             elif t == "tool/call":
                 args = d.get("arguments")
                 try:

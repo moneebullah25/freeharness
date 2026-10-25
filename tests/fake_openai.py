@@ -9,7 +9,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 LOG = Path(os.environ.get("FAKE_OPENAI_LOG", tempfile.gettempdir())) / "freeharness-fake-requests.jsonl"
-PORT = 8766
+PORT = int(os.environ.get("FAKE_PORT", "8766"))
+# FAKE_SCRIPT: JSON list, one entry per model request in order (the last repeats):
+#   {"text": "..."} | {"tool": "bash", "args": {...}} | {"sleep": 5, "then": {...}}
+SCRIPT = json.loads(os.environ["FAKE_SCRIPT"]) if os.environ.get("FAKE_SCRIPT") else None
+_N = [0]
 
 
 class H(BaseHTTPRequestHandler):
@@ -53,6 +57,23 @@ class H(BaseHTTPRequestHandler):
 
         chunk({"role": "assistant", "content": ""})
         msgs = body.get("messages", [])
+        if SCRIPT is not None:
+            step = SCRIPT[min(_N[0], len(SCRIPT) - 1)]
+            _N[0] += 1
+            if step.get("sleep"):
+                time.sleep(step["sleep"])
+                step = step.get("then", {"text": "late"})
+            if "tool" in step:
+                chunk({"tool_calls": [{"index": 0, "id": f"call_{_N[0]}", "type": "function",
+                                       "function": {"name": step["tool"], "arguments": json.dumps(step.get("args", {}))}}]})
+                chunk({}, "tool_calls")
+            else:
+                chunk({"content": step.get("text", "ok")})
+                chunk({}, "stop")
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+            self.close_connection = True
+            return
         got_tool = any(m["role"] == "tool" for m in msgs)
         if tools and "read" in tools and not got_tool:
             # split the arguments across chunks the way real servers do
