@@ -18,7 +18,7 @@ yet proven here, `gap` = nothing yet. Nothing below is marked done until a test 
 | memory_service | none in dsh; `fh` vault MCP done, memory MCP in progress | partial |
 | tool_registry / tool_executor | dsh `tools`, `tool-bash`, `tool-fs`, `tool-fs-search`, `tool-str-replace-editor`, `tool-todo`, `tool-skill`, `tool-session-query` | verify (tools agent) |
 | mcp_client | dsh `mcp-client` (one row per server, explicit config) | done (vault) |
-| workflow_engine | dsh `workflow`, `tool-workflow` (model-written fan-out scripts), `goal`, `jobs`; disabled by us for prompt size | gap: no deterministic predefined flows |
+| workflow_engine | dsh `workflow`, `tool-workflow` (model-written fan-out scripts), `goal`, `jobs`; disabled by us for prompt size | partly: one deterministic sequential flow exists (the OSS stage engine, `oss_flow.py`); no general flow format, no branching/parallel |
 | sandbox_manager | dsh `sandbox`, `sandbox-local`, `sandbox-policy`, `bash-sandbox`, `fs-sandbox`; `fh` bwrap runner (no network, home/tmp hidden), `fh` read fence, `security.probe` | **tested (stage 1)**, Linux + bubblewrap only; dsh alone restricts neither reads nor network (measured); same-kernel, not a container |
 | policy_engine / approval_service | dsh `user-approval` (ask/never, fail-closed, audited), `permission-presets`; `fh` terminal answerer over a private socket | **tested (stage 1)**: no answerer = refused at once (not a hang); `-p` = never; interactive = y/N, default no, one call only |
 | evaluation_engine | `fh` `eval/` (deterministic, workspace-judged) | deterministic done; LLM-judge and human review = gap |
@@ -34,7 +34,7 @@ yet proven here, `gap` = nothing yet. Nothing below is marked done until a test 
 | 3 | Tool results loop back | proven (evals) |
 | 4 | Persistence across restart | dsh sessions proven; scratchpad in progress |
 | 5 | Cross-session memory | in progress |
-| 6 | Workflow branching/parallel/retry/approval | dsh workflow exists but disabled; gap |
+| 6 | Workflow branching/parallel/retry/approval | dsh workflow exists but disabled; retry/repair, checkpoints, resume and human-approval gates exist in the OSS stage engine only; branching/parallel: gap |
 | 7 | Isolated unsafe execution | tested: bash confined by bwrap (workspace-only writes, home/tmp hidden, no network); same-kernel only, NOT a container; Linux+bubblewrap only (fails closed elsewhere) |
 | 8 | Prompt-injection can't bypass permissions | tested for file/network/escalation: an obeying scripted model reading an injected file cannot read the canary, reach the network or self-approve; MCP tools and in-workspace secrets not covered |
 | 9 | Retention, access, redaction | gap (redaction of logs/transcripts/memory) |
@@ -58,7 +58,11 @@ yet proven here, `gap` = nothing yet. Nothing below is marked done until a test 
 3. **Task layer.** `freeharness task run|status|resume|list|cancel`: task id, state machine
    (created/running/blocked/failed/cancelled/completed), checkpoints in the scratchpad, per-task report
    (changed files via dsh `workspace-changes`, tests, timeline from session log).
-4. **Workflows.** Deterministic flows in Python on top of the dsh runtime: sequential, branch, parallel
+4. **Workflows. STATUS: partly done.** Done and tested offline: a sequential stage engine with per-stage acceptance checks, bounded
+   repair turns, persistent state, checkpoints and resume, used by `freeharness oss run` (`src/freeharness/oss_flow.py`, docs/OSS_EVAL.md).
+   Not done: the engine is specific to the OSS pipeline (its stage list is data, but there is no general flow definition format or CLI),
+   there is no branching or parallel execution (no per-branch git worktrees), and the CSV-export reference flow does not exist. Not yet
+   shown to help with real free-tier models: only scripted-model runs have been done. Original scope: deterministic flows in Python on top of the dsh runtime: sequential, branch, parallel
    (each branch in its own git worktree), bounded retries/repair, approval gates; the CSV-export flow
    as the reference.
 5. **Evaluation.** Combine deterministic checks (existing) + LLM judge (through the same shim, evidence

@@ -48,6 +48,8 @@ class RunDir:
         self.overlay = p / "overlay" / "github.yml"
         self.transcripts = p / "transcript"
         self.report, self.advisory = p / "report.md", p / "advisory.json"
+        self.state = p / "state.json"                    # the staged workflow's checkpoint (oss_flow.py)
+        self.stages_dir = p / "stages"                   # one log per stage (turns, prompts, acceptance results)
 
 
 # --------------------------------------------------------------------------- readers
@@ -671,7 +673,7 @@ def timeline(rd: RunDir, limit: int = 400) -> list[str]:
     for ln in _jsonl(rd.supervisor):
         if ln.get("kind") == "tool":
             rows.append(f"{ln.get('t', '')[11:19]}  #{ln.get('n', ''):>3}  {ln.get('status', ''):8} {tool_base(ln.get('tool', ''))}  {ln.get('args', '')}")
-        elif ln.get("kind") in ("note", "turn_end", "text"):
+        elif ln.get("kind") in ("note", "turn_end", "text", "stage"):
             rows.append(f"{ln.get('t', '')[11:19]}       {ln.get('kind'):8} {_clip(ln.get('text', ''), 150)}")
     if len(rows) > limit:
         rows = rows[:limit // 2] + [f"... {len(rows) - limit} more line(s) in supervisor.jsonl ..."] + rows[-limit // 2:]
@@ -689,6 +691,16 @@ def render_report(run_dir, result: dict | None = None, assessment: dict | None =
             f"- mode: {'LIVE' if cfg.get('live') else 'dry-run (nothing posted)'}   models: {', '.join(cfg.get('models', []))}   max steps: {cfg.get('max_steps')}",
             f"- session: {run.get('session')}   run status: {run.get('status', '?')}   steps: {run.get('steps', '?')}   tool calls: {result['tool_calls']}",
             f"- started {run.get('started', '?')}  finished {run.get('finished', '?')}", ""]
+    state = _json(rd.state)
+    if state.get("stages"):                     # a staged run (oss_flow.py): per-stage status before the checklist
+        from . import oss_stage
+        out += [f"{h}Stages", "", f"outcome: {state.get('outcome', '?')}   candidates tried: {state.get('candidate_no', 1)}   "
+                f"model fallbacks: {state.get('model_idx', 0)}", ""]
+        out += oss_stage.stage_lines(state)
+        if (state.get("blocked") or {}).get("kind") == "duplicate":
+            out += ["", "This stop is legitimate (the bug was already reported or fixed, or someone else is on it): the "
+                    "checklist items of the later stages are unmet by design, not because the harness failed."]
+        out.append("")
     out += [f"{h}Checklist", ""]
     for i in result["checklist"]:
         out.append(f"- [{MARK[i['status']]}] {i['id']}: {i['title']}")

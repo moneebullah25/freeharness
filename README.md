@@ -64,7 +64,9 @@ to the dsh home (`--set all` is refused without `--yes`: skill descriptions are 
 `freeharness oss run <owner/repo>` is the OSS-contribution evaluation: the agent finds one real bug in one component, proves it is not
 filed yet, drafts the issue, fixes it on a branch and drafts the PR, all through the GitHub gate. Dry-run by default (nothing is posted);
 `--live` needs a terminal and your approval of each post. `freeharness oss report <run-id>` prints the timeline and a deterministic
-checklist. See [docs/OSS_EVAL.md](docs/OSS_EVAL.md).
+checklist. The run is a staged workflow (setup, hunt, dupcheck, issue, fix, pr: one short prompt per stage, a deterministic
+acceptance check, bounded repair turns, a `state.json` checkpoint and `oss run --resume <run-id>`); `--single-turn` keeps the old
+one-prompt run. See [docs/OSS_EVAL.md](docs/OSS_EVAL.md).
 
 ## Providers
 A site joins the rotation only if it passes the tool-use eval (`freeharness eval --model <name>`): 8 coding tasks

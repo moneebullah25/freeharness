@@ -87,6 +87,9 @@ class H(BaseHTTPRequestHandler):
             steps = json.loads(Path(script).read_text())
             idx = sum(1 for m in msgs if m["role"] == "assistant")
             step = steps[idx] if idx < len(steps) else {"text": "done"}
+            if step.get("sleep"):                    # {"sleep": 30, "then": {...}}: a test kills the client meanwhile
+                time.sleep(step["sleep"])
+                step = step.get("then", {"text": "late"})
             real = next((t for t in tools if step.get("tool") and (t == step["tool"] or t.endswith("_" + step["tool"]))), None)
             if step.get("tool") and real:
                 chunk({"tool_calls": [{"index": 0, "id": f"call_{idx}", "type": "function",

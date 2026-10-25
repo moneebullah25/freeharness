@@ -166,7 +166,7 @@ def world(tmp_path, monkeypatch):
 def run_dry(w, steps, **kw):
     w.serve(steps)
     code, rd = oss_cmd.run("up/proj", "src", ["auto"], False, kw.pop("max_steps", 60), 300.0, no_shim=True,
-                           root=w.tmp / "runs", **kw)
+                           root=w.tmp / "runs", single_turn=True, **kw)
     assert rd is not None
     return code, rd
 
@@ -225,7 +225,7 @@ def test_cli_dry_run_needs_no_terminal_can_be_tailed_live_and_report_and_list_wo
     import threading
     world.serve(good_script())
     out = {}
-    argv = ["run", "up/proj", "--component", "src", "--models", "auto", "--max-steps", "60", "--no-shim"]
+    argv = ["run", "up/proj", "--component", "src", "--models", "auto", "--max-steps", "60", "--no-shim", "--single-turn"]
     t = threading.Thread(target=lambda: out.update(code=oss_cmd.main(argv)))
     t.start()
     seen_while_running = 0
@@ -369,7 +369,7 @@ def live_world(tmp_path, monkeypatch):
 def run_live(w, steps, confirm="confirmed"):
     w.serve(steps)
     return oss_cmd.run("up/proj", "src", ["auto"], True, 60, 300.0, no_shim=True, root=w.tmp / "runs",
-                       approver_factory=lambda rd: Human(rd, confirm))
+                       approver_factory=lambda rd: Human(rd, confirm), single_turn=True)
 
 
 @needs_harness
@@ -445,7 +445,7 @@ def test_a_failed_turn_moves_the_same_session_to_the_next_model_and_shares_the_s
     monkeypatch.setattr(oss_cmd.rpc, "Runtime", StubRuntime)
     StubRuntime.log = []
     code, rd = oss_cmd.run("up/proj", "src", ["gemini", "deepseek"], False, 10, 60.0, no_shim=True, root=tmp_path / "runs",
-                           say=lambda s: None, repair=0)
+                           say=lambda s: None, repair=0, single_turn=True)
     sid = "oss-" + rd.path.name
     assert [e[0] for e in StubRuntime.log] == ["init", "start", "turn", "restart", "resume", "turn", "close"]
     first, second = [e for e in StubRuntime.log if e[0] == "turn"]

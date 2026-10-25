@@ -8,6 +8,19 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Added
+- Staged workflow engine for `freeharness oss run` (new `oss_flow.py`, stage checks in `eval/oss_stage.py`): the default is now six
+  stages (setup, hunt, dupcheck, issue, fix, pr), each ONE short prompt on the same dsh session, built from `state.json`, with a
+  step budget and a deterministic acceptance check (oss_judge items plus stage checks: a recorded repro run whose output shows the
+  failure, per-candidate search evidence and a `DECISION:` line checked against the model's own search results, a new test that
+  FAILED before the edit and PASSED after as recorded bash calls, a diff touching a source and a test file). Only the unmet items of
+  the stage go back to the model, up to 2 repair turns (`--repair N`), then the run advances or ends `blocked at <stage>: <reason>`.
+  A duplicate or competing PR ends `blocked: duplicate` (exit code 3) unless the model picks another candidate (max 2); the harness
+  shows the model the titles of its own overlapping search results once. State is checkpointed after every turn (`state.json`,
+  `stages/NN-<id>.jsonl`); `freeharness oss run --resume <run-id>` continues at the first unfinished stage on the same session and
+  workspace (`--max-steps N` replaces the budget). Model fallback keeps the stage state. `oss report` shows per-stage status
+  (passed / repaired n times / blocked), repair turns and steps before the unchanged checklist. `--single-turn` keeps the old
+  one-prompt run. The harness never writes drafts, bug text, fixes, queries or PR text. Offline tests: `tests/test_oss_flow.py`,
+  `tests/test_oss_flow_dsh.py`; docs/OSS_EVAL.md.
 - GitHub gate tools `gh_branch` (server-side fetch of upstream + `checkout -b` from its default branch; refuses the default
   branch name, unsafe names, a dirty tree, an existing branch) and `gh_setup_env` (a per-project venv outside the clone from the
   repo's own declared test/lint dependencies, read from upstream's committed files; unsafe lines skipped and listed; pip runs

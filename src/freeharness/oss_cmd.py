@@ -1,5 +1,6 @@
 """
 `freeharness oss run <owner/repo> [--component NAME] [--models gemini,deepseek] [--live] [--max-steps N]`
+`freeharness oss run --resume <run-id>`                `freeharness oss run <owner/repo> --single-turn`
 `freeharness oss report <run-id> [--judge]`            `freeharness oss list`
 
 The "OSS contribution" evaluation: give the agent one real repo and the task of finding ONE real bug in ONE
@@ -11,6 +12,10 @@ the gh_* tools (mcp/ossgate.py = the GitHub gate), because the agent's sandbox h
 Every run gets a directory <state>/oss/<run-id>/ (prompt, config, clone workspace, the gate's evidence and drafts,
 transcript, calls.jsonl, supervisor.jsonl, reviews.jsonl, run.json, report.md). The gate overlay is passed to
 this run's runtime only (Runtime(overlay_files=[...])): nothing global is written or changed.
+
+By default the run is a STAGED WORKFLOW (oss_flow.py): setup, hunt, dupcheck, issue, fix, pr, each one short prompt on the
+same session, each checked against the tool-call record and the gate's files, with bounded repair turns, a checkpoint
+(state.json) after every stage and `--resume`. `--single-turn` sends the old 13-step prompt as one turn.
 
 Dry-run is the default and needs no terminal: every gate is validated, drafts are saved, nothing is posted.
 `--live` needs a terminal and an explicit y/N; each post is then shown to you for approve / reject / request changes.
@@ -53,12 +58,8 @@ suite_listing = oj.suite_listing
 DEFAULT_REPAIR = 2
 
 
-def build_prompt(repo: str, component: str, live: bool) -> str:
-    name = repo.split("/")[1]
-    comp = (f"Component to review: `{component}` (a directory or module of the repo). Review only that."
-            if component else
-            "Pick ONE small component yourself (one module or package) and name it on the report line `Component reviewed:`.")
-    mode = (
+def mode_text(live: bool) -> str:
+    return (
         "Mode: LIVE. gh_fork, gh_issue_create, gh_push and gh_pr_create each show their draft to the human, who approves, "
         "rejects, or sends a note asking for changes. Approved = posted. A note = revise and call the tool again. "
         "Rejected = stop and report. Do not ask in chat before calling them: the tool asks the human. "
@@ -67,6 +68,14 @@ def build_prompt(repo: str, component: str, live: bool) -> str:
         "Mode: DRY-RUN. Nothing is posted: each gh_* write validates every gate, saves a draft and returns what it would send. "
         "After gh_issue_create succeeds the tool gives you a PLACEHOLDER issue number: use that number in the branch name, "
         "in `issue=` and in `Fixes #N` for gh_pr_create. Do not ask in chat before calling the tools.")
+
+
+def build_prompt(repo: str, component: str, live: bool) -> str:
+    name = repo.split("/")[1]
+    comp = (f"Component to review: `{component}` (a directory or module of the repo). Review only that."
+            if component else
+            "Pick ONE small component yourself (one module or package) and name it on the report line `Component reviewed:`.")
+    mode = mode_text(live)
     return f"""OSS contribution task for {repo}.
 
 All GitHub access goes ONLY through the gh_* tools (gh_repo_info, gh_search, gh_get_file, gh_fork, gh_clone, gh_branch, gh_setup_env, gh_push, gh_issue_create, gh_pr_create). Your shell has no network, no HOME and no git credentials: never try `git push`, `gh`, `curl` or any other route. If a gh_* tool refuses, read the reason, fix exactly what it says and call again; if it cannot be fixed, stop and report the refusal text.
@@ -131,14 +140,17 @@ def overlay_row(rd: oj.RunDir, live: bool) -> str:
 
 
 def prepare(repo: str, component: str, models: list[str], live: bool, max_steps: int, turn_timeout: float,
-            root: Path | None = None) -> oj.RunDir:
+            root: Path | None = None, single_turn: bool = False) -> oj.RunDir:
+    from . import oss_flow
     rd = oj.RunDir((root or oss_root()) / new_run_id())
-    for d in (rd.path, rd.workspace, rd.gh_state, rd.overlay.parent, rd.transcripts):
+    for d in (rd.path, rd.workspace, rd.gh_state, rd.overlay.parent, rd.transcripts) + (() if single_turn else (rd.stages_dir,)):
         paths.private_dir(d)
-    rd.prompt.write_text(build_prompt(repo, component, live), encoding="utf-8")
+    rd.prompt.write_text(build_prompt(repo, component, live) if single_turn else oss_flow.flow_prompt(repo, component, live),
+                         encoding="utf-8")
     rd.config.write_text(json.dumps({"repo": repo, "component": component, "models": models, "live": live,
                                      "max_steps": max_steps, "turn_timeout": turn_timeout, "created": oj.now_iso(),
-                                     "task": "oss-contribution"}, indent=1), encoding="utf-8")
+                                     "task": "oss-contribution", "mode": "single-turn" if single_turn else "staged"},
+                                    indent=1), encoding="utf-8")
     rd.overlay.write_text(overlay_row(rd, live), encoding="utf-8")
     return rd
 
@@ -187,7 +199,11 @@ class Recorder:
     def __init__(self, rd: oj.RunDir, transcript: Transcript | None = None, echo=None):
         self.rd, self.tr, self.echo = rd, transcript, echo
         self.pending: dict[str, dict] = {}
-        self.n = 0
+        self.texts: list[str] = []                  # assistant messages since the caller last cleared it (stage workflow)
+        try:                                        # a resumed run keeps counting: the judge orders calls by `n`
+            self.n = sum(1 for _ in open(rd.calls, encoding="utf-8"))      # noqa: SIM115
+        except OSError:
+            self.n = 0
         self._lock = threading.Lock()
         self._sup = open(rd.supervisor, "a", encoding="utf-8", buffering=1)      # noqa: SIM115
         self._calls = open(rd.calls, "a", encoding="utf-8", buffering=1)         # noqa: SIM115
@@ -232,6 +248,7 @@ class Recorder:
         elif t == "assistant/message":
             txt = extract_text((d.get("message") or {}).get("content")).strip()
             if txt:
+                self.texts.append(txt[:3000])
                 self.note("text", " ".join(txt.split())[:300])
         elif t == "turn/end":
             self.note("turn_end", json.dumps(d.get("reason") or {}), reason=d.get("reason"))
@@ -276,10 +293,13 @@ def skills_missing() -> list[str]:
 
 def run(repo: str, component: str = "", models=("auto",), live: bool = False, max_steps: int = DEFAULT_MAX_STEPS,
         turn_timeout: float = DEFAULT_TURN_TIMEOUT, no_shim: bool = False, providers: str = "", approver_factory=None,
-        console=None, root: Path | None = None, say=None, repair: int = DEFAULT_REPAIR) -> tuple[int, oj.RunDir | None]:
+        console=None, root: Path | None = None, say=None, repair: int | None = None,
+        single_turn: bool = False) -> tuple[int, oj.RunDir | None]:
     """Run the evaluation. `approver_factory(rd)` -> an Approver (the CLI passes OssApprover when there is a terminal;
     tests pass a scripted human). Returns (exit code, run dir): 0 deterministic checks passed, 1 they did not or
-    the run did not finish, 2 it could not run."""
+    the run did not finish, 2 it could not run, 3 the staged run ended `blocked: duplicate` (a legitimate stop).
+    Default: the staged workflow (oss_flow.py); `single_turn=True` is the old one-prompt run. `repair=None` means the
+    stage table's max_repair (single-turn: DEFAULT_REPAIR)."""
     from rich.console import Console
     console = console or Console()
     say = say or (lambda s: console.print(s, markup=False, highlight=False))
@@ -305,11 +325,58 @@ def run(repo: str, component: str = "", models=("auto",), live: bool = False, ma
     if not (os.environ.get("FH_GH_GIT_NAME") and os.environ.get("FH_GH_GIT_EMAIL")):
         say("note: FH_GH_GIT_NAME / FH_GH_GIT_EMAIL are not set; gh_clone then leaves the clone without a commit identity "
             "and the agent's `git commit` may fail")
-    rd = prepare(repo, component, models, live, max_steps, turn_timeout, root)
-    say(f"run {rd.path.name}  ({'LIVE' if live else 'dry-run: nothing is posted'})\n  dir: {rd.path}\n"
-        f"  follow: tail -f {rd.supervisor}")
-    code = execute(rd, repo, models, live, max_steps, turn_timeout, no_shim, providers, approver_factory, console, say,
-                   repair)
+    rd = prepare(repo, component, models, live, max_steps, turn_timeout, root, single_turn)
+    say(f"run {rd.path.name}  ({'LIVE' if live else 'dry-run: nothing is posted'}, "
+        f"{'single-turn' if single_turn else 'staged'})\n  dir: {rd.path}\n  follow: tail -f {rd.supervisor}")
+    if single_turn:
+        code = execute(rd, repo, models, live, max_steps, turn_timeout, no_shim, providers, approver_factory, console, say,
+                       DEFAULT_REPAIR if repair is None else repair)
+    else:
+        from . import oss_flow
+        code = oss_flow.execute_flow(rd, repo, models, live, max_steps, turn_timeout, no_shim, providers, approver_factory,
+                                     console, say, repair)
+    return code, rd
+
+
+def resume_run(rd: oj.RunDir, no_shim: bool = False, providers: str = "", approver_factory=None, console=None, say=None,
+               repair: int | None = None, turn_timeout: float | None = None,
+               max_steps: int | None = None) -> tuple[int, oj.RunDir | None]:
+    """`freeharness oss run --resume <run-id>`: the same session, workspace and state; continue at the first unfinished stage."""
+    from rich.console import Console
+
+    from . import oss_flow
+    console = console or Console()
+    say = say or (lambda s: console.print(s, markup=False, highlight=False))
+    cfg, state, run_ = oj._json(rd.config), oj._json(rd.state), oj._json(rd.run)
+    if cfg.get("mode") != "staged" or not state:
+        say(f"{rd.path.name} is not a staged run (no state.json): only staged runs can be resumed")
+        return 2, None
+    blocked = state.get("blocked") or {}
+    if all(v.get("status") == "passed" for v in (state.get("stages") or {}).values()):
+        say(f"{rd.path.name}: every stage already passed; nothing to resume (freeharness oss report {rd.path.name})")
+        return 2, None
+    if blocked.get("kind") == "duplicate":
+        say(f"{rd.path.name} ended `blocked: duplicate` ({blocked.get('reason')}): a legitimate outcome, nothing to "
+            "resume; start a new run")
+        return 2, None
+    if run_.get("status") == "running" and run_.get("pid") and run_["pid"] != os.getpid() and oss_flow._alive(run_["pid"]):
+        say(f"{rd.path.name} is still running (pid {run_['pid']}); stop it before resuming")
+        return 2, None
+    live = bool(cfg.get("live"))
+    if live and approver_factory is None:
+        say("--live needs a terminal to show each draft to you; refusing")
+        return 2, None
+    if not github_cmd.token_available():
+        say("GITHUB_TOKEN is not in the environment (or FH_GH_ENVFILE): every gh_* tool needs it. Nothing was started.")
+        return 2, None
+    models = [m for m in cfg.get("models", []) if m] or ["auto"]
+    if max_steps is not None and max_steps != cfg.get("max_steps"):      # e.g. the run stopped at --max-steps: give it more
+        cfg["max_steps"] = max_steps
+        write_json(rd.config, cfg)
+    say(f"resuming {rd.path.name}  ({'LIVE' if live else 'dry-run'}, staged)\n  dir: {rd.path}\n  follow: tail -f {rd.supervisor}")
+    code = oss_flow.execute_flow(rd, cfg["repo"], models, live, int(cfg.get("max_steps", DEFAULT_MAX_STEPS)),
+                                 float(turn_timeout or cfg.get("turn_timeout", DEFAULT_TURN_TIMEOUT)), no_shim, providers,
+                                 approver_factory, console, say, repair, resume=True)
     return code, rd
 
 
@@ -449,12 +516,43 @@ an issue, competing-PR check, no attribution markers, no artifact files."""
 
 def cmd_run(a, console) -> int:
     from .client.cli import MODELS
+    tty = sys.stdin.isatty() and sys.stdout.isatty()
+
+    def factory(rd):
+        return OssApprover(console, rd) if tty else None
+    if a.resume:
+        if a.single_turn or a.component:
+            print("--resume continues a staged run as it was configured; it takes no --single-turn or --component", file=sys.stderr)
+            return 2
+        try:
+            rd = oj.RunDir(resolve_run(a.resume))
+        except OssError as e:
+            print(e, file=sys.stderr)
+            return 2
+        cfg = oj._json(rd.config)
+        if a.repo and a.repo != cfg.get("repo"):
+            print(f"{rd.path.name} is a run on {cfg.get('repo')}, not {a.repo}", file=sys.stderr)
+            return 2
+        if cfg.get("live"):
+            print(LIVE_NOTE)
+            if not tty:
+                print("refusing a live resume without a terminal to ask you", file=sys.stderr)
+                return 2
+            if input(f"resume LIVE against {cfg.get('repo')} and let approved drafts be posted? [y/N] ").strip().lower() \
+                    not in ("y", "yes"):
+                print("not started")
+                return 2
+        code, _ = resume_run(rd, a.no_shim, a.providers, factory if tty else None, console, repair=a.repair,
+                             turn_timeout=a.turn_timeout, max_steps=a.max_steps)
+        return code
+    if not a.repo:
+        print("give the repo (owner/name) or --resume <run-id>", file=sys.stderr)
+        return 2
     models = [m.strip() for m in a.models.split(",") if m.strip()]
     bad = [m for m in models if m not in MODELS]
     if bad:
         print(f"unknown model(s) {bad}; choose from {', '.join(MODELS)}", file=sys.stderr)
         return 2
-    tty = sys.stdin.isatty() and sys.stdout.isatty()
     if a.live:
         print(LIVE_NOTE)
         if not tty:
@@ -463,11 +561,10 @@ def cmd_run(a, console) -> int:
         if input(f"run LIVE against {a.repo} and let approved drafts be posted? [y/N] ").strip().lower() not in ("y", "yes"):
             print("not started")
             return 2
-
-    def factory(rd):
-        return OssApprover(console, rd) if tty else None
-    code, _ = run(a.repo, a.component or "", models, a.live, a.max_steps, a.turn_timeout, a.no_shim, a.providers,
-                  factory if tty else None, console, repair=a.repair)
+    code, _ = run(a.repo, a.component or "", models, a.live,
+                  DEFAULT_MAX_STEPS if a.max_steps is None else a.max_steps,
+                  DEFAULT_TURN_TIMEOUT if a.turn_timeout is None else a.turn_timeout, a.no_shim, a.providers,
+                  factory if tty else None, console, repair=a.repair, single_turn=a.single_turn)
     return code
 
 
@@ -505,17 +602,24 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("run", help="run the evaluation on one repo (dry-run unless --live)")
-    p.add_argument("repo", help="owner/name")
+    p.add_argument("repo", nargs="?", help="owner/name (not needed with --resume)")
     p.add_argument("--component", help="directory or module to review (default: the model picks one)")
     p.add_argument("--models", default="auto", help="comma-separated, tried in order: a turn that fails moves the SAME "
                    "session to the next model (default: %(default)s)")
     p.add_argument("--live", action="store_true", help="really post what you approve (needs a terminal and y/N)")
-    p.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS, metavar="N",
-                   help="abandon the run after N model steps in total; 0 = no limit (default: %(default)s)")
-    p.add_argument("--turn-timeout", type=float, default=DEFAULT_TURN_TIMEOUT, metavar="S")
-    p.add_argument("--repair", type=int, default=DEFAULT_REPAIR, metavar="N",
-                   help="when the model says it is done but the checklist still fails, send the unmet items back as "
-                        "evidence for up to N more turns (default: %(default)s; 0 = judge once, no feedback)")
+    p.add_argument("--max-steps", type=int, default=None, metavar="N",
+                   help=f"abandon the run after N model steps in total, over all stage and repair turns; 0 = no limit "
+                        f"(default: {DEFAULT_MAX_STEPS}; with --resume: replaces the run's earlier limit)")
+    p.add_argument("--turn-timeout", type=float, default=None, metavar="S",
+                   help=f"seconds one model turn may take (default: {int(DEFAULT_TURN_TIMEOUT)})")
+    p.add_argument("--repair", type=int, default=None, metavar="N",
+                   help="when a stage's acceptance check fails (single-turn: when the model says it is done but the checklist "
+                        "still fails), send back the unmet items as evidence for up to N more turns (default: 2 per stage; "
+                        "0 = judge once, no feedback)")
+    p.add_argument("--single-turn", action="store_true",
+                   help="the old behaviour: ONE prompt with all 13 steps (a free-tier model usually loses the thread)")
+    p.add_argument("--resume", metavar="RUN", help="continue a staged run (id, prefix or 'latest') at its first unfinished "
+                   "stage, on the same dsh session and workspace")
     p.add_argument("--providers", default="", help="providers for a shim this command starts (default: from --models)")
     p.add_argument("--no-shim", action="store_true", help="do not start or check the shim")
     q = sub.add_parser("report", help="timeline, checklist and assessment of a run; writes report.md")

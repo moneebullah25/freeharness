@@ -137,10 +137,10 @@ def test_run_refuses_bad_repo_missing_token_and_live_without_a_terminal(tmp_path
 def test_prompt_and_overlay_are_per_run_and_carry_only_names_of_secrets(tmp_path, monkeypatch):
     monkeypatch.setenv("FREEHARNESS_HOME", str(tmp_path / "fh"))
     monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
-    rd = oss_cmd.prepare("up/proj", "src/core", ["gemini", "deepseek"], False, 150, 60.0)
+    rd = oss_cmd.prepare("up/proj", "src/core", ["gemini", "deepseek"], False, 150, 60.0, single_turn=True)
     cfg = json.loads(rd.config.read_text())
     assert cfg["repo"] == "up/proj" and cfg["component"] == "src/core" and cfg["models"] == ["gemini", "deepseek"]
-    assert cfg["live"] is False and cfg["max_steps"] == 150
+    assert cfg["live"] is False and cfg["max_steps"] == 150 and cfg["mode"] == "single-turn" and not rd.stages_dir.exists()
     prompt = rd.prompt.read_text()
     assert "src/core" in prompt and "DRY-RUN" in prompt and "reports/proj_issues.md" in prompt and "oss-contribution" in prompt
     row = rd.overlay.read_text()
@@ -151,6 +151,10 @@ def test_prompt_and_overlay_are_per_run_and_carry_only_names_of_secrets(tmp_path
     assert not (paths.config_dir() / "overlay.d").exists() and not (paths.dsh_home() / "AGENTS.md").exists()
     live_prompt = oss_cmd.build_prompt("up/proj", "", True)
     assert "LIVE" in live_prompt and "Pick ONE small component" in live_prompt
+    staged = oss_cmd.prepare("up/proj", "src/core", ["auto"], False, 150, 60.0)         # the default: the staged workflow
+    assert json.loads(staged.config.read_text())["mode"] == "staged" and staged.stages_dir.is_dir()
+    assert "staged workflow" in staged.prompt.read_text() and "DRY-RUN" in staged.prompt.read_text()
+    assert staged.overlay.read_text() == rd.overlay.read_text().replace(rd.path.name, staged.path.name)
 
 
 def test_recorder_writes_one_supervisor_line_per_step_and_the_full_call_record(tmp_path):
