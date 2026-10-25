@@ -3,7 +3,7 @@ shim — an OpenAI-compatible /v1/chat/completions endpoint backed by free chat
 sites driven through bridge.Session. Point an agent harness (DeepSeek Harness's
 `llm-pi-ai` custom provider, or anything that speaks Chat Completions) at it.
 
-    freeharness serve                       # gemini, headless
+    freeharness serve                       # gemini then qwen, headless
     freeharness serve --providers gemini,qwen
     python -m freeharness.backends.shim check   # does each site answer right now?
 
@@ -705,7 +705,7 @@ def serve(host, port, keys, headless):
         if not prov.shared:
             return Session(headless=headless and prov.headless_ok, provider=prov, pw=pw)
         if not paths.chrome_profile().is_dir():
-            raise RuntimeError(f"{prov.key} needs a login: run chrome_login.py first")
+            raise RuntimeError(f"{prov.key} needs you to log in: run `freeharness login` first")
         root = shared.get("root")
         if root is None or not _alive(root):
             # The browser is NOT any provider's session: a provider that fails gets
@@ -768,7 +768,7 @@ def main():
         sp = sub.add_parser(name)
         # Only providers that pass the tool-use eval belong here (docs/PROVIDERS.md): a
         # fallback that confidently refuses to use tools is worse than no fallback.
-        sp.add_argument("--providers", default="gemini",
+        sp.add_argument("--providers", default="gemini,qwen",
                         help="comma-separated, in rotation order (default: %(default)s)")
         sp.add_argument("--headed", action="store_true", help="show the browser windows")
         if name == "serve":

@@ -153,7 +153,7 @@ def main(argv=None) -> int:
     if unknown:
         sys.exit(f"unknown task(s) {unknown}; see --list")
 
-    providers = "gemini,perplexity" if args.model == "auto" else args.model
+    providers = "gemini,qwen" if args.model == "auto" else args.model
     shim = None if args.no_shim else ensure_shim(providers)
     results = []
     try:

@@ -2,7 +2,7 @@
 
 A Claude-Code-style terminal coding agent that runs on **free web-chat sites** instead of a paid API.
 The agent loop (tools, sessions, compaction) is [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-(MIT); the model behind it is a set of chat sites (Gemini today, more as they pass the eval) driven by Playwright
+(MIT); the model behind it is a set of chat sites (Gemini and Qwen today, more as they pass the eval) driven by Playwright
 through an OpenAI-compatible shim, so work continues on another site when one runs out of free quota.
 
 ```
@@ -36,7 +36,7 @@ Updating: `pipx install --force .` (or a newer wheel). Your logins and sessions 
 cd ~/my-project
 freeharness                          # interactive; the agent works in this directory
 freeharness -p "fix the failing test and run the suite"
-freeharness --model gemini           # pin one site;  --providers gemini,qwen  to add Qwen (candidate)
+freeharness --model gemini           # pin one site;  default rotation is gemini,qwen
 ```
 In the session: `/help` `/model` `/providers` `/new` `/sessions` `/resume <id>` `/status` `/quit`.
 **Ctrl-C** abandons the current turn (the harness has no cancel call, so the runtime is restarted and the
@@ -46,9 +46,8 @@ Run it in a **project directory**, not your home directory: the agent can read a
 
 ## Providers
 A site joins the rotation only if it passes the tool-use eval (`freeharness eval --model <name>`): 8 coding tasks
-judged on the resulting files, never on what the model says. **Today only Gemini is eligible (8/8)**; Qwen is a candidate that
-needs a re-run (blocked by a verification page), Perplexity and Grok failed (0/8). So you get one reliable backend now, and real
-rotation as soon as a second provider passes. Evidence: [docs/PROVIDERS.md](docs/PROVIDERS.md).
+judged on the resulting files, never on what the model says. **Today Gemini (8/8) and Qwen (8/8) are eligible and make up the default rotation**; Perplexity and Grok failed (0/8). Qwen needs
+`freeharness login qwen` once; without it the shim simply falls back to Gemini. Evidence: [docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ## Other commands
 `freeharness setup | login [site…] [--check] | doctor [--report] | serve | eval | version`

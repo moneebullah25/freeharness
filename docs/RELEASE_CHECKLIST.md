@@ -110,7 +110,7 @@ All **done** and tested in `tests/test_portable.py`: pathlib everywhere; per-use
 | Final checklist + post-release smoke test | this file + CI `package` job |
 
 ## Known limitations
-- Only providers that pass the eval are in rotation; today that is **Gemini only** (Qwen is a candidate pending a re-eval, see docs/PROVIDERS.md). One provider's free tier is small, and failover between two real providers has not been exercised yet.
+- Only providers that pass the eval are in rotation: Gemini and Qwen today (docs/PROVIDERS.md). Free tiers are small and Qwen may show a verification page after heavy use; the router skips a blocked provider, but if both are blocked or out of quota the agent waits (HTTP 429 + Retry-After).
 - Web UIs change without notice; selectors are the part that rots (`providers.py`), and `doctor`/eval exist to catch it.
 - Each model step takes 15-120 s (browser round trip); long edits are slow.
 - Linux x86-64 is the only platform verified end to end.

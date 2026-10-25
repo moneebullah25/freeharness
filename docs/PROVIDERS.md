@@ -7,8 +7,8 @@ headless, on a free account.
 
 | Provider | Login | Eval | Status |
 |---|---|---|---|
-| **Gemini** | none | **8/8** (2026-10-25, fresh install of this package; also 8/8 on 2026-10-24) | **Eligible: the default** |
-| Qwen | free account | 7/8 on 2026-10-25 with the earlier parser; the one failure was three batched tool calls read back as empty labels (Monaco code viewer). Fixed by reading the reply's Copy-button clipboard; **not re-evaluated on the fix** because Qwen then showed a slide-to-verify page that only a human can complete | **Candidate**: opt in with `--providers gemini,qwen`; becomes eligible after a passing re-run |
+| **Gemini** | none | **8/8** (2026-10-25, fresh install of this package; also 8/8 on 2026-10-24) | **Eligible: first in the rotation** |
+| **Qwen** | free account | **8/8** (2026-10-25, after the clipboard/parser fixes; an earlier run with the old parser was 7/8) | **Eligible: in the default rotation** |
 | Perplexity | none | 0/8 (2026-10-24): refuses to use tools in every task | Excluded |
 | Grok | free account (+ one-time age prompt) | 0/8 (2026-10-25): answers as if it had its own sandbox ("Created greeting.txt") and never emits our tool calls, so the workspace never changes | Excluded |
 | ChatGPT | none/free | not evaluated: Cloudflare challenges headless; works only in a visible window | Registered, not in rotation |
@@ -16,10 +16,10 @@ headless, on a free account.
 | HuggingChat | free account | not evaluated: free message quota already exhausted ("Upgrade Required") | Excluded |
 | Kimi, Z.ai, DeepSeek chat, Claude, Mistral, LMArena, You.com, DeepAI, Blackbox, Phind, Pi | n/a | not usable without payment, a CAPTCHA, or are blocked headless (2026-10-24) | Not registered |
 
-## Why one provider is not "rotation" yet
-The router (per-provider cooldowns, failover before any output is streamed, 429 + Retry-After when all are resting) is unit-tested
-but has never failed over between two real providers, because only Gemini is eligible. The next step toward real rotation is a passing
-Qwen re-eval (after completing its verification once with `freeharness login qwen`) or another provider that passes the eval.
+## Failover evidence
+With Gemini forced to fail with a quota error, the router put it on a 900 s cooldown and the same request was answered by a live Qwen
+session (2026-10-25; the router logic is also unit-tested). Rotation order is the `--providers` order: Gemini first (no login needed),
+then Qwen. A site that shows a verification page or hits its free limit is skipped for 15-30 minutes and retried afterwards.
 
 ## Adding or re-checking a provider
 1. Add a `Provider` in `backends/providers.py` (selectors measured on the live page; note provenance in a comment).

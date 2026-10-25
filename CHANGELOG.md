@@ -16,8 +16,8 @@ First release.
   with interrupt-and-resume (Ctrl-C), saved sessions, `/model`, `/providers`, `/resume`.
 - OpenAI-compatible shim in front of Playwright-driven web chat sites, with per-provider cooldowns,
   failover before the first output, and tool calls carried in fenced `tool_call` blocks.
-- Providers: Gemini (no login; eval 8/8, the default). Qwen (login) is a candidate pending a re-eval; Perplexity, Grok and
-  ChatGPT are registered but excluded (see docs/PROVIDERS.md for the evidence).
+- Providers: Gemini (no login; eval 8/8) and Qwen (login; eval 8/8) form the default rotation, with failover verified against
+  a live second provider. Perplexity, Grok and ChatGPT are registered but excluded (see docs/PROVIDERS.md).
 - `freeharness setup` (checksum-verified Node + `npm ci` of the pinned harness), `login`, `doctor`,
   `eval`, `serve`.
 - Shim access control: per-install bearer token (0600) and loopback-only Host check.
