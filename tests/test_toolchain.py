@@ -234,3 +234,17 @@ def test_probe_and_doctor_report_missing_partial_and_full_from_real_runs(small_t
     assert security.probe_toolchain()[0] == "missing"
     row = [r for r in doctor.checks() if r[1].startswith("standard toolchain")][0]
     assert row[0] == "warn" and row[1] == "standard toolchain: missing" and "freeharness toolchain install" in row[2]
+
+
+def test_runner_puts_the_project_environment_first_so_bare_pytest_finds_the_project_deps(tmp_path):
+    r = runner_module()
+    ws = tmp_path / "ws"
+    (ws / "proj").mkdir(parents=True)
+    (ws / "proj-venv" / "bin").mkdir(parents=True)
+    (ws / "proj-venv" / "bin" / "python").write_text("")
+    prof = ["--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp", "--bind", str(ws), str(ws), "--", "bash", "-c", "true"]  # noqa: S108
+    argv = r.build(prof, str(ws), "/home/someone", {"PATH": "/usr/bin:/bin"}, "/usr/bin/bwrap")
+    assert argv[argv.index("PATH") + 1].split(":")[0] == f"{ws}/proj-venv/bin"
+    assert argv[argv.index("PYTHONPATH") + 1] == str(ws / "proj")
+    none = r.build(prof, str(tmp_path), "/home/someone", {"PATH": "/usr/bin"}, "/usr/bin/bwrap")
+    assert "PYTHONPATH" not in none

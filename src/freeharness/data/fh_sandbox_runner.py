@@ -77,6 +77,21 @@ def tool_paths(environ: dict, home: str) -> tuple[list[str], list[str]]:
     return binds, path
 
 
+def project_env(workspace: str) -> tuple[str, str]:
+    """(bin dir, source dir) of the per-project environment `gh_setup_env` built in the workspace
+    (<workspace>/<repo>-venv with the clone at <workspace>/<repo>), or ("", "") when there is none."""
+    try:
+        cands = [d for d in os.scandir(workspace) if d.is_dir(follow_symlinks=False) and d.name.endswith("-venv")]
+    except OSError:
+        return "", ""
+    for d in sorted(cands, key=lambda e: e.stat().st_mtime, reverse=True):
+        src = os.path.join(workspace, d.name[:-len("-venv")])
+        pybin = os.path.join(d.path, "bin")
+        if os.path.isfile(os.path.join(pybin, "python")) and os.path.isdir(src):
+            return pybin, src
+    return "", ""
+
+
 def build(argv: list[str], cwd: str, home: str, environ: dict, bwrap: str) -> list[str]:
     if "--" not in argv:
         die("malformed invocation (no -- separator); refusing to run unconfined")
@@ -110,6 +125,10 @@ def build(argv: list[str], cwd: str, home: str, environ: dict, bwrap: str) -> li
     tc_binds, tc_path = tool_paths(environ, home)
     for b in dict.fromkeys(tc_binds):
         out += ["--ro-bind", b, b]
+    proj_bin, proj_src = project_env(workspace)
+    if proj_bin:                       # gh_setup_env built <workspace>/<repo>-venv: bare `pytest`/`python` use it
+        tc_path = [proj_bin] + tc_path
+        out += ["--setenv", "PYTHONPATH", proj_src]
     if tc_path:
         out += ["--setenv", "PATH", os.pathsep.join(tc_path + [environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")]),
                 "--setenv", "PYTHONNOUSERSITE", "1"]
