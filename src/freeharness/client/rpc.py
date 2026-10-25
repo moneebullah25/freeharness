@@ -151,6 +151,7 @@ class Runtime:
     def start(self):
         paths.private_dir(self.home)
         env = dict(os.environ, DSH_HOME=str(self.home), BRIDGE_KEY=auth.load_or_create_token())
+        env["FREEHARNESS_CWD"] = self.cwd                 # the memory MCP server scopes project facts by it
         env["PATH"] = find_node_dir() + os.pathsep + env.get("PATH", "")
         cmd = [str(DSH_BIN), "--profile", "sdk", "--patch", str(self.patch)]
         for extra in self.overlays():                     # user MCP servers etc.: <config>/overlay.d/*.yml

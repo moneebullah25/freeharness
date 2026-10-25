@@ -10,6 +10,9 @@ freeharness: a terminal coding agent (DeepSeek Harness) on free web-chat backend
     freeharness eval --model NAME    gate a provider with the tool-use eval
     freeharness transcript [id]      list / print the readable record of past sessions
     freeharness vault <path>         connect a notes vault as read-only memory (--off to remove)
+    freeharness --continue           resume the latest session for this folder
+    freeharness sessions [--all]     list sessions (title, age)
+    freeharness memory ...           long-term memory: list | add | search | forget | extract | export | wipe
     freeharness version
 """
 from __future__ import annotations
@@ -18,7 +21,7 @@ import sys
 
 from . import __version__
 
-SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "vault", "transcript", "version")
+SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "vault", "transcript", "memory", "sessions", "version")
 
 
 def main(argv=None) -> int:
@@ -36,6 +39,12 @@ def main(argv=None) -> int:
         return run(rest)
     if cmd == "transcript":
         from .transcript import main as run
+        return run(rest)
+    if cmd == "memory":
+        from .memory_cmd import main as run
+        return run(rest)
+    if cmd == "sessions":
+        from .sessions import main as run
         return run(rest)
     if cmd == "vault":
         from .vault_cmd import main as run

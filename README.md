@@ -53,6 +53,10 @@ Run it in a **project directory**, not your home directory: the agent can read a
 skills (`SKILL.md`) and extra MCP servers (`overlay.d/*.yml`) are supported. See [docs/MEMORY.md](docs/MEMORY.md) for what the agent
 knows at the start of a turn, how retrieval works and where everything is stored.
 
+Sessions and long-term memory survive restarts: `freeharness --continue` resumes the latest session for the folder, a per-session
+scratchpad and typed saved facts (`freeharness memory ...`, `/remember`) are recalled automatically. See
+[docs/SESSIONS_AND_MEMORY.md](docs/SESSIONS_AND_MEMORY.md).
+
 ## Providers
 A site joins the rotation only if it passes the tool-use eval (`freeharness eval --model <name>`): 8 coding tasks
 judged on the resulting files, never on what the model says. **Today Gemini (8/8) and Qwen (8/8) are eligible and make up the default rotation**; Perplexity and Grok failed (0/8). Qwen needs
@@ -62,7 +66,7 @@ so each runs in its **own visible Chrome window** with its own profile: sign in 
 when the site is first used. Evidence: [docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ## Other commands
-`freeharness setup | login [site…] [--check] | doctor [--report] | vault <path> | transcript [id] | serve | eval | version`
+`freeharness setup | login [site…] [--check] | doctor [--report] | vault <path> | memory … | sessions | transcript [id] | serve | eval | version`
 
 ## Where things live
 Per-user directories, owner-only; `FREEHARNESS_HOME=/dir` puts everything under one root. See [docs/PRIVACY.md](docs/PRIVACY.md).
