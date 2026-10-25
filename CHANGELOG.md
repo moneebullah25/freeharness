@@ -8,6 +8,11 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Added
+- `freeharness agents install [--set oss|all] [--ref SHA] | list | remove`: installs open-source Agency agent skills
+  (msitarzewski/agency-agents, MIT) into the dsh home by running its own `convert.sh`/`install.sh --tool dsh` from a fresh clone
+  pinned to a full commit SHA (HEAD verified, scripts checksummed, scrubbed environment, `--path` forced). Default set `oss` is 9
+  curated agents (listing ~2.8k chars instead of ~74k for all 284); `--set all` warns and needs `--yes`. Also installs the bundled
+  `oss-contribution` skill (14-step OSS pipeline for the `gh_*` tools). docs/AGENTS_SKILLS.md, tests/test_agents_cmd.py.
 - Session index (`sessions.py`): `freeharness --continue` resumes the latest session for the current folder, `freeharness sessions`
   and `/sessions` list title and age, per-session scratchpad shown and re-injected after resume.
 - Long-term memory: typed facts (user | feedback | project | reference, global or per folder) in a local sqlite file with

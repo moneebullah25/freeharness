@@ -57,6 +57,10 @@ Sessions and long-term memory survive restarts: `freeharness --continue` resumes
 scratchpad and typed saved facts (`freeharness memory ...`, `/remember`) are recalled automatically. See
 [docs/SESSIONS_AND_MEMORY.md](docs/SESSIONS_AND_MEMORY.md).
 
+`freeharness agents install` adds a small, pinned set of open-source "Agency" agent skills and an `oss-contribution` pipeline skill
+to the dsh home (`--set all` is refused without `--yes`: skill descriptions are re-sent every step). See
+[docs/AGENTS_SKILLS.md](docs/AGENTS_SKILLS.md).
+
 ## Providers
 A site joins the rotation only if it passes the tool-use eval (`freeharness eval --model <name>`): 8 coding tasks
 judged on the resulting files, never on what the model says. **Today Gemini (8/8) and Qwen (8/8) are eligible and make up the default rotation**; Perplexity and Grok failed (0/8). Qwen needs
