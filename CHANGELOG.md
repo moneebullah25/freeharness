@@ -7,6 +7,15 @@ releases may include breaking changes; they will be listed under **Changed**.
 
 ## [Unreleased]
 
+### Added
+- Stage 1 security baseline: bash runs in a bubblewrap sandbox with no network and `$HOME`, `/tmp`, `/run`
+  hidden; read/grep/glob are fenced to the workspace; sandbox escalation needs a human (`y/N`, default no) and
+  `-p` refuses it; `freeharness doctor` reports the bash sandbox as full/partial/unavailable from real probes.
+  Same-kernel confinement, not a container. Offline tests in `tests/test_security.py`.
+
+### Changed
+- Without bubblewrap (or off Linux) bash tool calls are refused instead of run unconfined.
+
 ## [0.1.0] - 2026-10-25
 
 First release.

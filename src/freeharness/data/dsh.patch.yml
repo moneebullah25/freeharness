@@ -63,3 +63,19 @@
   disabled: true
 - id: plan-mode
   disabled: true
+
+# --- stage 1 security baseline (docs/ARCHITECTURE.md "Security"). dsh's defaults are already
+# workspace-write for bash and write/edit, but dsh restricts neither reads nor the network.
+# freeharness adds both through two files it ships (security.py passes the runner's
+# location in FH_SANDBOX_RUNNER when it starts dsh):
+#  * sandbox-local `runnerCommand` -> data/fh_sandbox_runner.py: dsh's own bwrap profile plus
+#    no network and $HOME, /tmp, /run hidden. No bwrap = the bash call fails (SANDBOX_UNAVAILABLE
+#    or a runner failure), it never runs unconfined. If the variable is missing the command
+#    points at a path that does not exist, so that also fails closed.
+#  * the fh-guard plugin (data/fh_guard.mjs): approval relay to the terminal client, and a
+#    fence on read/grep/glob paths outside the workspace. A plugin row cannot name an absolute
+#    path in static YAML, so security.guard_patch() writes that one row at start-up.
+- id: sandbox
+  config:
+    runnerCommand: !!js "process.env.FH_SANDBOX_RUNNER ? JSON.parse(process.env.FH_SANDBOX_RUNNER) : ['/nonexistent/freeharness-sandbox-runner-not-configured']"
+    runnerFailureSignatures: ['freeharness-sandbox: ', 'bwrap: ']

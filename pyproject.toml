@@ -25,7 +25,7 @@ freeharness = "freeharness.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-freeharness = ["data/*.yml", "data/harness/*.json"]
+freeharness = ["data/*.yml", "data/*.mjs", "data/*.py", "data/harness/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
