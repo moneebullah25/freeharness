@@ -50,6 +50,9 @@ suite_listing = oj.suite_listing
 
 # --------------------------------------------------------------------------- the task
 
+DEFAULT_REPAIR = 2
+
+
 def build_prompt(repo: str, component: str, live: bool) -> str:
     name = repo.split("/")[1]
     comp = (f"Component to review: `{component}` (a directory or module of the repo). Review only that."
@@ -273,7 +276,7 @@ def skills_missing() -> list[str]:
 
 def run(repo: str, component: str = "", models=("auto",), live: bool = False, max_steps: int = DEFAULT_MAX_STEPS,
         turn_timeout: float = DEFAULT_TURN_TIMEOUT, no_shim: bool = False, providers: str = "", approver_factory=None,
-        console=None, root: Path | None = None, say=None) -> tuple[int, oj.RunDir | None]:
+        console=None, root: Path | None = None, say=None, repair: int = DEFAULT_REPAIR) -> tuple[int, oj.RunDir | None]:
     """Run the evaluation. `approver_factory(rd)` -> an Approver (the CLI passes OssApprover when there is a terminal;
     tests pass a scripted human). Returns (exit code, run dir): 0 deterministic checks passed, 1 they did not or
     the run did not finish, 2 it could not run."""
@@ -305,7 +308,8 @@ def run(repo: str, component: str = "", models=("auto",), live: bool = False, ma
     rd = prepare(repo, component, models, live, max_steps, turn_timeout, root)
     say(f"run {rd.path.name}  ({'LIVE' if live else 'dry-run: nothing is posted'})\n  dir: {rd.path}\n"
         f"  follow: tail -f {rd.supervisor}")
-    code = execute(rd, repo, models, live, max_steps, turn_timeout, no_shim, providers, approver_factory, console, say)
+    code = execute(rd, repo, models, live, max_steps, turn_timeout, no_shim, providers, approver_factory, console, say,
+                   repair)
     return code, rd
 
 
@@ -316,8 +320,16 @@ def _provider_list(models: list[str], override: str) -> str:
     return "gemini,qwen" if ("auto" in models or not named) else ",".join(dict.fromkeys(named))
 
 
+def repair_prompt(unmet: list[dict]) -> str:
+    """Evidence for the model: what the harness's own checks found missing. No hints about HOW."""
+    lines = "\n".join(f"- {i['id']}: {i['evidence'][:200]}" for i in unmet)
+    return ("The harness checked your work against the task's requirements and these are NOT met yet. "
+            "They come from tool-call records, not from your summary. Do the missing work with the tools "
+            "(do not just say it is done), then stop.\n" + lines)
+
+
 def execute(rd: oj.RunDir, repo: str, models: list[str], live: bool, max_steps: int, turn_timeout: float,
-            no_shim: bool, providers: str, approver_factory, console, say) -> int:
+            no_shim: bool, providers: str, approver_factory, console, say, repair: int = 0) -> int:
     sid = "oss-" + rd.path.name
     info = {"run": rd.path.name, "session": sid, "status": "starting", "pid": os.getpid(), "started": oj.now_iso(),
             "models_used": [], "steps": 0}
@@ -328,6 +340,7 @@ def execute(rd: oj.RunDir, repo: str, models: list[str], live: bool, max_steps: 
                      approver=approver)
     shim, status, final = None, "error", ""
     steps, turns = 0, []
+    repair_left = max(0, repair)
     try:
         if not no_shim:
             shim = rpc.ensure_shim(_provider_list(models, providers), sticky="auto")
@@ -368,6 +381,27 @@ def execute(rd: oj.RunDir, repo: str, models: list[str], live: bool, max_steps: 
             final = res.final_text or final
             if res.ok:
                 status = "completed"
+                # The model said it is finished: the judge, not the model, decides. Unmet requirements go back
+                # to it as evidence for a bounded number of repair turns (the same model keeps the session).
+                while repair_left > 0 and not (max_steps and steps >= max_steps):
+                    unmet = [i for i in oj.oss_judge(rd.path)["checklist"] if i["status"] == "fail"]
+                    if not unmet:
+                        break
+                    repair_left -= 1
+                    rec.note("note", f"repair turn: {len(unmet)} requirement(s) unmet after the model said it was done")
+                    feedback = repair_prompt(unmet)
+                    try:
+                        res = rt.run_turn(sid, feedback, on_event=rec.event, timeout=turn_timeout,
+                                          max_steps=(max_steps - steps) if max_steps else None)
+                    except (rpc.RuntimeDied, TimeoutError, rpc.RpcError) as e:
+                        rec.note("note", f"repair turn failed: {str(e)[:300]}")
+                        break
+                    steps += res.steps
+                    turns.append({"model": model, "repair": True, "ok": res.ok, "reason": res.reason,
+                                  "steps": res.steps, "seconds": round(res.seconds, 1)})
+                    final = res.final_text or final
+                    if not res.ok:
+                        break
                 break
             status = "max_steps" if res.reason.get("kind") == "max_steps" else "failed"
             if status == "max_steps":
@@ -433,7 +467,7 @@ def cmd_run(a, console) -> int:
     def factory(rd):
         return OssApprover(console, rd) if tty else None
     code, _ = run(a.repo, a.component or "", models, a.live, a.max_steps, a.turn_timeout, a.no_shim, a.providers,
-                  factory if tty else None, console)
+                  factory if tty else None, console, repair=a.repair)
     return code
 
 
@@ -479,6 +513,9 @@ def main(argv=None) -> int:
     p.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS, metavar="N",
                    help="abandon the run after N model steps in total; 0 = no limit (default: %(default)s)")
     p.add_argument("--turn-timeout", type=float, default=DEFAULT_TURN_TIMEOUT, metavar="S")
+    p.add_argument("--repair", type=int, default=DEFAULT_REPAIR, metavar="N",
+                   help="when the model says it is done but the checklist still fails, send the unmet items back as "
+                        "evidence for up to N more turns (default: %(default)s; 0 = judge once, no feedback)")
     p.add_argument("--providers", default="", help="providers for a shim this command starts (default: from --models)")
     p.add_argument("--no-shim", action="store_true", help="do not start or check the shim")
     q = sub.add_parser("report", help="timeline, checklist and assessment of a run; writes report.md")

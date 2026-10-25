@@ -284,3 +284,9 @@ def test_assessment_goes_through_final_assessment_the_judge_and_a_human_cannot_o
     # nothing in the directory at all: unverified/failed, never success
     empty = oj.oss_judge(tmp_path / "nothing")
     assert empty["ok"] is False and oj.assess(tmp_path / "nothing", empty)["success"] is False
+
+
+def test_repair_prompt_lists_unmet_items_without_hints():
+    from freeharness import oss_cmd
+    text = oss_cmd.repair_prompt([{"id": "duplicate_search", "evidence": "0 distinct queries; need 4+"}])
+    assert "duplicate_search" in text and "NOT met" in text and "do not just say it is done" in text

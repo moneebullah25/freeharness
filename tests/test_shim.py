@@ -804,3 +804,10 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
     print("all passed")
+
+
+def test_name_only_object_is_a_mention_not_a_call():
+    _, calls = shim.parse_reply('List: {"name": "read"} and {"name": "bash"}', ['{"name": "read"}'], TOOLS_S)
+    assert calls == []
+    _, calls = shim.parse_reply("x", ['{"name": "read", "arguments": {}}'], TOOLS_S)
+    assert [c["function"]["name"] for c in calls] == ["read"]

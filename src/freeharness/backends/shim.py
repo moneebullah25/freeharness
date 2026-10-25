@@ -314,6 +314,8 @@ def _as_call(obj, names: dict):
     name = names.get(str(obj["name"]).lower())
     if not name:
         return None
+    if not any(k in obj for k in ("arguments", "parameters", "input")):
+        return None        # {"name": "bash"} alone is a mention (a list of tools), never a call with empty arguments
     args = obj.get("arguments", obj.get("parameters", obj.get("input", {})))
     if isinstance(args, str):
         try:
