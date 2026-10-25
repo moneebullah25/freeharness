@@ -95,6 +95,8 @@ function privateRoots() {
 function allowedRoots(workspace) {
   // dsh spills oversized tool output to <tmpdir>/dsh-spill-*, which the model is told to read back
   const out = [realish(workspace)];
+  // the installed skills (SKILL.md and their reference files) are read-only instructions the model is meant to read
+  if (process.env.DSH_HOME) out.push(realish(path.join(process.env.DSH_HOME, 'skills')));
   try {
     for (const d of fs.readdirSync(os.tmpdir())) {
       if (d.startsWith('dsh-spill-')) out.push(realish(path.join(os.tmpdir(), d)));

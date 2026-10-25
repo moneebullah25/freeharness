@@ -467,3 +467,25 @@ def test_probe_measures_instead_of_assuming():
     if st.level != "unavailable":
         assert set(st.checks) == {"workspace write allowed", "outside write blocked", "outside read blocked", "network blocked"}
         assert (st.level == "full") == all(st.checks.values())
+
+
+def test_guard_allows_reading_installed_skills_but_not_the_rest_of_the_dsh_home():
+    import json
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    guard = Path(__file__).resolve().parents[1] / "src/freeharness/data/fh_guard.mjs"
+    home = Path(tempfile.mkdtemp(prefix="fhskills"))
+    (home / "skills" / "x").mkdir(parents=True)
+    (home / "sessions").mkdir()
+    ws = Path(tempfile.mkdtemp(prefix="fhws"))
+    script = (f"import {{checkReadPath}} from {json.dumps(guard.as_uri())};"
+              f"console.log(JSON.stringify([checkReadPath({json.dumps(str(home / 'skills' / 'x' / 'SKILL.md'))}, {json.dumps(str(ws))}),"
+              f"checkReadPath({json.dumps(str(home / 'sessions' / 's.jsonl'))}, {json.dumps(str(ws))})]))")
+    out = subprocess.run(["node", "--input-type=module", "-e", script], env=dict(os.environ, DSH_HOME=str(home)),
+                         capture_output=True, text=True, timeout=60)
+    allowed, blocked = json.loads(out.stdout)
+    assert allowed is None and blocked and "not allowed" in blocked, out.stderr
