@@ -211,7 +211,7 @@ def _bm25(facts: list[dict], terms: list[str], k1: float = 1.5, b: float = 0.75)
     avg = (sum(len(d) for d in docs) / n) or 1.0
     df = {t: sum(1 for d in docs if t in d) for t in terms}
     scored = []
-    for f, d in zip(facts, docs):
+    for f, d in zip(facts, docs, strict=False):
         s = 0.0
         for t in terms:
             tf = d.count(t)

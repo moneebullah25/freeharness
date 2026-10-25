@@ -7,7 +7,6 @@ the model's prompt via the AGENTS.md block; the scratchpad is written under the 
 session files restore the whole conversation on resume. Skipped when the harness is not installed.
 """
 import json
-import socket
 import threading
 import time
 import uuid

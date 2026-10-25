@@ -106,7 +106,7 @@ def ask_shim(prompt: str, model: str = "auto", timeout: float = 300.0) -> str:
     from .. import auth
     from ..client.rpc import SHIM_URL
     body = json.dumps({"model": model, "stream": False, "messages": [{"role": "user", "content": prompt}]}).encode()
-    req = urllib.request.Request(SHIM_URL + "/v1/chat/completions", data=body, method="POST",
+    req = urllib.request.Request(SHIM_URL + "/v1/chat/completions", data=body, method="POST",  # noqa: S310 (fixed local URL)
                                  headers={"Content-Type": "application/json",
                                           "Authorization": "Bearer " + auth.load_or_create_token()})
     with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 (fixed local URL)

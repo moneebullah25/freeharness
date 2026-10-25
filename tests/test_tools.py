@@ -45,6 +45,7 @@ def run_script(steps, files=None, tmp=None):
     srv = subprocess.Popen([sys.executable, str(HERE / "scripted_openai.py"), str(port), str(script), str(log)],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     rt = None
+    saved_overlays = rpc.Runtime.__dict__["overlays"]
     rpc.Runtime.overlays = staticmethod(lambda: [])      # ignore the user's overlay.d (MCP servers etc.)
     try:
         for _ in range(50):
@@ -57,6 +58,7 @@ def run_script(steps, files=None, tmp=None):
         rt.start()
         res = rt.run_turn(f"tools-{uuid.uuid4().hex[:8]}", "go", timeout=180)
     finally:
+        rpc.Runtime.overlays = saved_overlays
         if rt:
             rt.close()
         srv.terminate()

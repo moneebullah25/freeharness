@@ -198,7 +198,7 @@ def fit_messages(messages: list[dict], tools: list[dict] | None, budget: int) ->
         return messages
     ms = [dict(m) for m in messages]
     last_user = max((i for i, m in enumerate(ms) if m.get("role") == "user"), default=-1)
-    for i, m in enumerate(ms):
+    for _i, m in enumerate(ms):
         if m.get("role") == "tool" and _text(m.get("content")) != OMITTED:
             m["content"] = OMITTED
             if size(ms) <= budget:
