@@ -445,7 +445,7 @@ def test_a_failed_turn_moves_the_same_session_to_the_next_model_and_shares_the_s
     monkeypatch.setattr(oss_cmd.rpc, "Runtime", StubRuntime)
     StubRuntime.log = []
     code, rd = oss_cmd.run("up/proj", "src", ["gemini", "deepseek"], False, 10, 60.0, no_shim=True, root=tmp_path / "runs",
-                           say=lambda s: None)
+                           say=lambda s: None, repair=0)
     sid = "oss-" + rd.path.name
     assert [e[0] for e in StubRuntime.log] == ["init", "start", "turn", "restart", "resume", "turn", "close"]
     first, second = [e for e in StubRuntime.log if e[0] == "turn"]
