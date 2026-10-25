@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+from pathlib import Path
 import os
 import socket
 import stat
@@ -14,7 +15,7 @@ import sys
 
 from . import __version__, logs, paths
 from .client import rpc
-from .login_cmd import find_chrome, logged_in_sites
+from .login_cmd import find_chrome, status_by_site
 
 OK, WARN, FAIL = "ok", "warn", "FAIL"
 
@@ -39,9 +40,20 @@ def checks() -> list[tuple[str, str, str]]:
         "" if rpc.DSH_BIN.exists() else "run `freeharness setup`")
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         add(WARN, "not running as root", "a browser with your logins should not run as root")
-    status = logged_in_sites()
-    n = sum(status.values())
-    add(OK if n else WARN, "signed-in sites", ", ".join(k for k, v in status.items() if v) or "none: run `freeharness login`")
+    status = status_by_site()
+    ok_sites = [k for k, v in status.items() if v]
+    add(OK if ok_sites else WARN, "signed-in sites", ", ".join(ok_sites) or "none: run `freeharness login`")
+    unknown = [k for k, v in status.items() if v is None]
+    if unknown:
+        add(WARN, "sites whose login cannot be read", ", ".join(unknown) + " (verify with the eval)")
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            have = Path(pw.chromium.executable_path).exists()
+        add(OK if have else FAIL, "Playwright Chromium installed (used by Gemini)",
+            "" if have else "run `freeharness setup`")
+    except Exception as e:  # noqa: BLE001
+        add(WARN, "Playwright Chromium check", str(e)[:80])
     tf = paths.token_file()
     if tf.exists():
         mode = stat.S_IMODE(tf.stat().st_mode)

@@ -23,9 +23,14 @@ from . import paths
 
 SITES = {
     "gemini": "https://gemini.google.com/app", "chatgpt": "https://chatgpt.com/",
+    "deepseek": "https://chat.deepseek.com/sign_in",
     "grok": "https://grok.com/", "qwen": "https://chat.qwen.ai/",
     "duck": "https://duck.ai/", "hf": "https://huggingface.co/chat/",
 }
+# Sites that block headless Chrome run in a visible window with their OWN profile (Chromium locks a
+# profile to one browser, and the shared one is headless), so they are logged in separately.
+OWN_PROFILE = ("chatgpt", "deepseek")
+
 # cookie that exists only while signed in, per site (host suffix, cookie name)
 SESSION_COOKIES = {
     "gemini": (".google.com", "SID"), "chatgpt": (".chatgpt.com", "__Secure-next-auth.session-token.0"),
@@ -59,7 +64,7 @@ def cookie_db(profile: Path) -> Path | None:
     return None
 
 
-def logged_in_sites(profile: Path | None = None) -> dict[str, bool]:
+def logged_in_sites(profile: Path | None = None, only: str | None = None) -> dict[str, bool]:
     """Which sites have a session cookie saved. Presence only, never the values."""
     db = cookie_db(profile or paths.chrome_profile())
     out = {k: False for k in SESSION_COOKIES}
@@ -71,6 +76,8 @@ def logged_in_sites(profile: Path | None = None) -> dict[str, bool]:
             shutil.copy2(db, copy)
             con = sqlite3.connect(copy)
             for site, (host, name) in SESSION_COOKIES.items():
+                if only and site != only:
+                    continue
                 row = con.execute("select 1 from cookies where host_key like ? and name = ? limit 1",
                                   ("%" + host, name)).fetchone()
                 out[site] = bool(row)
@@ -80,30 +87,50 @@ def logged_in_sites(profile: Path | None = None) -> dict[str, bool]:
     return out
 
 
+def _open_chrome(chrome: str, profile: Path, urls: list[str]):
+    paths.private_dir(profile)
+    flags = ["--password-store=basic"] if sys.platform.startswith("linux") else \
+            ["--use-mock-keychain"] if sys.platform == "darwin" else []
+    subprocess.run([chrome, f"--user-data-dir={profile}", "--profile-directory=Default", *flags,
+                    "--no-first-run", "--no-default-browser-check", *urls])
+
+
+def status_by_site() -> dict[str, bool | None]:
+    """site -> signed in (True/False), or None when it cannot be read from cookies."""
+    shared = logged_in_sites()
+    out: dict[str, bool | None] = {k: v for k, v in shared.items() if k not in OWN_PROFILE}
+    for site in OWN_PROFILE:
+        if site in SESSION_COOKIES:
+            out[site] = logged_in_sites(paths.provider_profile(site), only=site)[site]
+        else:
+            out[site] = None
+    return out
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="freeharness login", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("sites", nargs="*", choices=list(SITES), help=f"default: {' '.join(SITES)}")
     ap.add_argument("--check", action="store_true", help="only report which sites are signed in")
     args = ap.parse_args(argv)
-    profile = paths.chrome_profile()
 
     if not args.check:
         chrome = find_chrome()
         if not chrome:
             print("Google Chrome not found. Install it, or set FREEHARNESS_CHROME to its path.", file=sys.stderr)
             return 1
-        paths.private_dir(profile)
-        flags = ["--password-store=basic"] if sys.platform.startswith("linux") else \
-                ["--use-mock-keychain"] if sys.platform == "darwin" else []
-        urls = [SITES[s] for s in (args.sites or SITES)]
-        print("Sign in to the sites you want, then CLOSE the Chrome window (use its X) to save.")
-        subprocess.run([chrome, f"--user-data-dir={profile}", "--profile-directory=Default", *flags,
-                        "--no-first-run", "--no-default-browser-check", *urls])
-    status = logged_in_sites(profile)
+        wanted = args.sites or list(SITES)
+        shared = [s for s in wanted if s not in OWN_PROFILE]
+        if shared:
+            print("Sign in to the sites you want, then CLOSE the Chrome window (use its X) to save.")
+            _open_chrome(chrome, paths.chrome_profile(), [SITES[s] for s in shared])
+        for site in (s for s in wanted if s in OWN_PROFILE):
+            print(f"{site} runs in its own visible window; sign in there, then close it with its X.")
+            _open_chrome(chrome, paths.provider_profile(site), [SITES[site]])
+    status = status_by_site()
     for site, ok in status.items():
-        print(f"  {site:8} {'signed in' if ok else 'not signed in'}")
-    return 0 if any(status.values()) else 1
+        print(f"  {site:8} {'signed in' if ok else 'not signed in' if ok is False else 'unknown (check with the eval)'}")
+    return 0 if any(v for v in status.values() if v is not None) else 1
 
 
 if __name__ == "__main__":

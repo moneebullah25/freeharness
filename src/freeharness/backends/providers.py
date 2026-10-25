@@ -49,6 +49,8 @@ class Provider:
     consent: tuple = ()             # buttons to click away after load (best effort)
     challenge_url: tuple = ()       # URL fragments of the site's human-verification page; seeing one
                                     # means "stop and cool down", never "keep waiting"
+    channel: str = ""               # "chrome": drive installed Chrome (needed for a profile that `freeharness
+                                    # login` created); "" = Playwright's bundled Chromium
     copy_button: str = ""           # the last reply's "Copy" button: its clipboard text is the exact
                                     # markdown, for sites whose code viewers do not keep code in the DOM
     strip: re.Pattern | None = field(default=None, compare=False)  # UI chrome in the answer text
@@ -68,7 +70,8 @@ class Provider:
 CHATGPT = Provider(
     key="chatgpt", label="ChatGPT", url="https://chatgpt.com/",
     new_url="https://chatgpt.com/?model=auto",
-    headless_ok=False,          # Cloudflare Turnstile — see README "Measured"
+    headless_ok=False,          # Cloudflare challenges headless even when logged in (2026-10-25): a visible window
+    channel="chrome",           # its own profile (profiles/chatgpt), signed in with `freeharness login chatgpt`
     verified=True,
     max_prompt=100_000,
     errors=("something went wrong", "you've reached our limit", "too many requests",
@@ -185,14 +188,14 @@ ELIGIBLE = ("gemini", "qwen")
 # Everything registered, eligible first. The rest failed the eval or cannot run headless:
 # Grok and Perplexity answer without using tools (0/8), so a turn that lands on them can
 # "finish" having changed nothing; ChatGPT is behind a Cloudflare check and needs a window.
-EVERYTHING = ("gemini", "qwen", "grok", "perplexity", "chatgpt")
+EVERYTHING = ("gemini", "qwen", "grok", "perplexity", "chatgpt")  # + "deepseek" once measured
 
 
 def resolve(spec: str, headed: bool = False) -> list[str]:
-    """`--providers` value -> provider keys. "all" means every registered site that can run
-    in the current mode (no visible window unless `headed`), eligible ones first."""
+    """`--providers` value -> provider keys. "all" means every registered site, eligible ones
+    first. Sites that block headless browsers (ChatGPT, DeepSeek) run in their own visible window."""
     if spec.strip().lower() == "all":
-        return [k for k in EVERYTHING if PROVIDERS[k].headless_ok or headed]
+        return list(EVERYTHING)
     keys = [k.strip() for k in spec.split(",") if k.strip()]
     unknown = [k for k in keys if k not in PROVIDERS]
     if unknown:

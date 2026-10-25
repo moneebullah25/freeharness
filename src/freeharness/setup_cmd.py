@@ -107,6 +107,10 @@ def main(argv=None) -> int:
         except RuntimeError:
             node_dir = str(install_node())
         install_harness(node_dir)
+        print("installing Playwright's Chromium (used by providers that need no login)…")
+        r = subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"])
+        if r.returncode:
+            raise RuntimeError("playwright install chromium failed")
     except (RuntimeError, OSError) as e:
         print(f"setup failed: {e}", file=sys.stderr)
         return 1

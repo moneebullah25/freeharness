@@ -11,7 +11,7 @@ headless, on a free account.
 | **Qwen** | free account | **8/8** (2026-10-25, after the clipboard/parser fixes; an earlier run with the old parser was 7/8) | **Eligible: in the default rotation** |
 | Perplexity | none | 0/8 (2026-10-24): refuses to use tools in every task | Excluded |
 | Grok | free account (+ one-time age prompt) | 0/8 (2026-10-25): answers as if it had its own sandbox ("Created greeting.txt") and never emits our tool calls, so the workspace never changes | Excluded |
-| ChatGPT | none/free | not evaluated: Cloudflare challenges headless; works only in a visible window | Registered, not in rotation |
+| ChatGPT | free account | not evaluated yet: Cloudflare challenges headless even when signed in (2026-10-25), so it runs in its own visible Chrome window (own profile, `freeharness login chatgpt`) | In `--providers all` only; not in the default rotation until it passes the eval |
 | Duck.ai | none | not evaluated: shows a "select all squares containing a duck" CAPTCHA on a message | Excluded (CAPTCHAs are never bypassed) |
 | HuggingChat | free account | not evaluated: free message quota already exhausted ("Upgrade Required") | Excluded |
 | Kimi, Z.ai, DeepSeek chat, Claude, Mistral, LMArena, You.com, DeepAI, Blackbox, Phind, Pi | n/a | not usable without payment, a CAPTCHA, or are blocked headless (2026-10-24) | Not registered |
@@ -21,8 +21,9 @@ headless, on a free account.
 eligible ones first: Gemini, Qwen, then Grok and Perplexity. The shim prints a warning for the ones that failed the eval. The cost is
 real: when Gemini and Qwen are both resting, a turn that lands on Grok or Perplexity often replies "done" without calling a tool, so the
 agent can report success with nothing changed. Waiting for an eligible site (HTTP 429 + Retry-After) is the safer default.
-ChatGPT is excluded from `all` unless the shim runs headed, because Cloudflare challenges headless Chrome even when logged in
-(tested 2026-10-25) and the challenge is never bypassed. HuggingChat and Duck.ai have no provider entry (free quota used up / CAPTCHA).
+Sites that block headless Chrome (ChatGPT; DeepSeek returns HTTP 403 to the headless user agent) run in their **own visible Chrome
+window with their own profile**, because Chromium locks a profile to one browser and the shared one is headless. Their challenges are
+never bypassed and the browser is not disguised: a normal visible Chrome simply is not blocked. HuggingChat and Duck.ai have no provider entry (free quota used up / CAPTCHA).
 
 ## Failover evidence
 With Gemini forced to fail with a quota error, the router put it on a 900 s cooldown and the same request was answered by a live Qwen

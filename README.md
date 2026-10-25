@@ -49,8 +49,9 @@ Run it in a **project directory**, not your home directory: the agent can read a
 A site joins the rotation only if it passes the tool-use eval (`freeharness eval --model <name>`): 8 coding tasks
 judged on the resulting files, never on what the model says. **Today Gemini (8/8) and Qwen (8/8) are eligible and make up the default rotation**; Perplexity and Grok failed (0/8). Qwen needs
 `freeharness login qwen` once; without it the shim simply falls back to Gemini. `--providers all` adds Grok and Perplexity at the end of the rotation; they only get a turn when the eligible sites are resting,
-and because they tend to answer without using tools, such a turn can "finish" without changing anything. ChatGPT cannot run headless
-(Cloudflare check), so `all` includes it only with a visible window. Evidence: [docs/PROVIDERS.md](docs/PROVIDERS.md).
+and because they tend to answer without using tools, such a turn can "finish" without changing anything. ChatGPT (and DeepSeek, once added) block headless Chrome,
+so each runs in its **own visible Chrome window** with its own profile: sign in with `freeharness login chatgpt`; the window appears
+when the site is first used. Evidence: [docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ## Other commands
 `freeharness setup | login [site…] [--check] | doctor [--report] | serve | eval | version`

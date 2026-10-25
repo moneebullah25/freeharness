@@ -163,9 +163,9 @@ def test_provider_spec_all_and_unknown():
     assert providers.resolve("gemini, qwen") == ["gemini", "qwen"]
     allk = providers.resolve("all")
     assert allk[:2] == ["gemini", "qwen"], "eligible providers must come first"
-    assert "chatgpt" not in allk, "a headless run must never open a visible window for ChatGPT"
-    assert set(allk) == {"gemini", "qwen", "grok", "perplexity"}
-    assert providers.resolve("ALL", headed=True)[-1] == "chatgpt"
+    assert "chatgpt" in allk, "sites that block headless Chrome run in their own visible window"
+    assert allk == list(providers.EVERYTHING) and providers.resolve("ALL") == allk
+    assert not providers.PROVIDERS["chatgpt"].headless_ok and providers.PROVIDERS["chatgpt"].channel == "chrome"
     try:
         providers.resolve("gemini,nope")
         raise AssertionError("unknown provider accepted")

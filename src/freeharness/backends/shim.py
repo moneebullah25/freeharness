@@ -703,7 +703,11 @@ def serve(host, port, keys, headless):
 
     def make(prov: Provider):
         if not prov.shared:
-            return Session(headless=headless and prov.headless_ok, provider=prov, pw=pw)
+            if prov.channel and not prov.profile.is_dir():
+                raise RuntimeError(f"{prov.key} needs you to log in: run `freeharness login {prov.key}` first")
+            # A site that blocks headless Chrome gets a visible window of its own (own profile).
+            return Session(headless=headless and prov.headless_ok, provider=prov, pw=pw,
+                           channel=prov.channel or None)
         if not paths.chrome_profile().is_dir():
             raise RuntimeError(f"{prov.key} needs you to log in: run `freeharness login` first")
         root = shared.get("root")
