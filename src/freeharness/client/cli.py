@@ -262,6 +262,9 @@ class App:
         hist = paths.private_dir(paths.state_dir()) / "history"
         session = PromptSession(history=FileHistory(str(hist)))
         self.c.print(f"[bold]freeharness[/] · {self.rt.cwd}\nsession {self.sid} · model {self.rt.model} · /help")
+        from ..github_cmd import live_banner
+        if live_banner():
+            self.c.print(f"[bold red]{live_banner()}[/]")
         while True:
             try:
                 line = session.prompt("› ").strip()

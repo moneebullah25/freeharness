@@ -25,7 +25,16 @@ releases may include breaking changes; they will be listed under **Changed**.
   `-p` refuses it; `freeharness doctor` reports the bash sandbox as full/partial/unavailable from real probes.
   Same-kernel confinement, not a container. Offline tests in `tests/test_security.py`.
 
+- GitHub gate: `freeharness github enable [--live] | disable | status` and the stdio MCP server `freeharness.mcp.ghgate`
+  (`gh_repo_info`, `gh_search`, `gh_get_file`, `gh_list_pr_files`, `gh_pr_threads`, `gh_fork`, `gh_clone`, `gh_push`,
+  `gh_issue_create`, `gh_pr_create`, `gh_pr_reply`, `gh_pr_resolve_thread`). Contribution rules are enforced in code:
+  human review of every draft (approve / reject / request changes) over the approval socket, dry-run by default, no force
+  pushes, no default-branch pushes, search evidence before issues, fail-closed competing-PR check, attribution-marker and
+  artifact refusals, token never printed or stored. `freeharness doctor` reports it; the client prints a banner when live.
+  See docs/GITHUB_GATE.md.
+
 ### Changed
+- The approval socket accepts a second message type (`confirm`, used by the GitHub gate); the sandbox approval protocol is unchanged.
 - Without bubblewrap (or off Linux) bash tool calls are refused instead of run unconfined.
 
 ## [0.1.0] - 2026-10-25
