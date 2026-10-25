@@ -26,7 +26,7 @@ from .render import Renderer, turn_outcome
 from .rpc import (DSH_HOME, Runtime, RuntimeDied, RpcError, ensure_shim,
                   shim_health)
 
-MODELS = ("auto", "gemini", "perplexity", "qwen", "grok")
+MODELS = ("auto", "gemini", "perplexity", "qwen", "grok", "chatgpt", "deepseek")
 HELP = """\
 [bold]/help[/]               this list
 [bold]/model[/] [dim][name][/]    show or switch the model: auto (rotate), gemini, perplexity, qwen, grok

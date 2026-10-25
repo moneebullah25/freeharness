@@ -23,6 +23,7 @@ First release.
 - Shim access control: per-install bearer token (0600) and loopback-only Host check.
 - Tool-use eval suite (8 tasks) that gates providers on workspace outcomes, not model claims.
 
+- DeepSeek provider (visible window, own profile). Spot-checked, not yet through the eval. ChatGPT's visible window signs in and accepts messages but its reply is not read back yet.
 - Sites that block headless Chrome run in their own visible window and profile (`freeharness login chatgpt`); `setup` now also installs Playwright's Chromium.
 - `--providers all` to rotate over every registered site that can run, eligible first, with a warning for those that failed the eval.
 

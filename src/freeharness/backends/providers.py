@@ -188,7 +188,7 @@ ELIGIBLE = ("gemini", "qwen")
 # Everything registered, eligible first. The rest failed the eval or cannot run headless:
 # Grok and Perplexity answer without using tools (0/8), so a turn that lands on them can
 # "finish" having changed nothing; ChatGPT is behind a Cloudflare check and needs a window.
-EVERYTHING = ("gemini", "qwen", "grok", "perplexity", "chatgpt")  # + "deepseek" once measured
+EVERYTHING = ("gemini", "qwen", "grok", "perplexity", "chatgpt", "deepseek")
 
 
 def resolve(spec: str, headed: bool = False) -> list[str]:
@@ -203,5 +203,24 @@ def resolve(spec: str, headed: bool = False) -> list[str]:
     return keys
 
 
-PROVIDERS: dict[str, Provider] = {p.key: p for p in (CHATGPT, GEMINI, PERPLEXITY, QWEN, GROK)}
+# MEASURED 2026-10-25, signed in, VISIBLE window: chat.deepseek.com answers HTTP 403 to headless Chrome
+# (CloudFront), so it runs headed in its own profile. Enter sends. The send button is an unlabeled div:
+# `ds-button--disabled` while the composer is empty or a reply is done, enabled while a reply
+# streams (it has become Stop) and while text is typed, which is why one selector serves both.
+DEEPSEEK = Provider(
+    key="deepseek", label="DeepSeek", url="https://chat.deepseek.com/",
+    headless_ok=False, channel="chrome",
+    reply_timeout=120, answer_timeout=180,
+    errors=("server is busy", "too many requests", "rate limit", "try again later",
+            "something went wrong", "message limit"),
+    sel={
+        "input": ["textarea"],
+        "send": [".ds-button--primary.ds-button--circle:not(.ds-button--disabled)"],
+        "stop": [".ds-button--primary.ds-button--circle:not(.ds-button--disabled)"],
+        "assistant": [".ds-assistant-message-main-content"],
+        "blocked": [],
+    },
+)
+
+PROVIDERS: dict[str, Provider] = {p.key: p for p in (CHATGPT, GEMINI, PERPLEXITY, QWEN, GROK, DEEPSEEK)}
 

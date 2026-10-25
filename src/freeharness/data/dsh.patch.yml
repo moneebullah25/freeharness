@@ -32,6 +32,10 @@
             name: Grok (web, pinned)
             contextWindow: 16000
             reasoningEfforts: false
+          - id: deepseek
+            name: DeepSeek (web, pinned)
+            contextWindow: 16000
+            reasoningEfforts: false
 
 # --- trimmed tools: every schema is re-sent (as prompt text) on every step of a
 # free-tier chat, so keep only what a coding agent needs: bash, fs, search, todo.
