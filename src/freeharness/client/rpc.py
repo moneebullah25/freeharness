@@ -153,6 +153,8 @@ class Runtime:
         env = dict(os.environ, DSH_HOME=str(self.home), BRIDGE_KEY=auth.load_or_create_token())
         env["PATH"] = find_node_dir() + os.pathsep + env.get("PATH", "")
         cmd = [str(DSH_BIN), "--profile", "sdk", "--patch", str(self.patch)]
+        for extra in self.overlays():                     # user MCP servers etc.: <config>/overlay.d/*.yml
+            cmd += ["--patch", str(extra)]
         # A fresh queue per process: the previous process's reader finishes late
         # and must not post its exit into (or fail requests of) this one.
         self.events = q = queue.Queue()
@@ -176,6 +178,11 @@ class Runtime:
                 if time.monotonic() > deadline:
                     raise
                 time.sleep(1.0)
+
+    @staticmethod
+    def overlays() -> list[Path]:
+        d = paths.config_dir() / "overlay.d"
+        return sorted(d.glob("*.yml")) if d.is_dir() else []
 
     def close(self):
         proc, self._proc = self._proc, None

@@ -45,8 +45,6 @@
 # free-tier chat, so keep only what a coding agent needs: bash, fs, search, todo.
 - id: tool-working-directory
   disabled: true
-- id: tool-skill
-  disabled: true
 - id: tool-subagent-control
   disabled: true
 - id: tool-subagent-list-agents

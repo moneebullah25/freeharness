@@ -1,0 +1,70 @@
+# Context, memory, skills and MCP
+
+## What the agent knows at the start of a turn
+1. **Instructions**: `AGENTS.md` / `CLAUDE.md` (+ `.local` variants) from the project root, and a user-global
+   `<data>/dsh-home/AGENTS.md` (`~/.local/share/freeharness/dsh-home/AGENTS.md` on Linux). Loaded on the first request of a session.
+2. **The session so far**: replayed from the session log; older history is condensed (compaction) when the context fills.
+3. **Tool descriptions**: every enabled tool adds text to *every* prompt, which is why the toolset is small (11 tools).
+
+There is no automatic long-term memory or self-improvement: the agent only "remembers" what is in those files, in a skill, in
+the vault, or in the session log. It can write project files (including a project `AGENTS.md` or a skill) when you ask; it cannot
+write to the user-global folders or the vault (sandbox + read-only server).
+
+## Notes vault as memory: `freeharness vault <path>`
+```bash
+freeharness vault ~/Desktop/Muneeb/MuneebVault     # connect (restart any running freeharness)
+freeharness vault                                   # status
+freeharness vault --off                             # disconnect
+```
+This installs a read-only MCP server (`freeharness.mcp.vault`) with two tools, plus a short instruction block in the global `AGENTS.md`:
+
+- `vault_search(query, limit)`: BM25 ranking over every `.md` note (title/filename boosted, `wiki/` above `raw/`), returning path,
+  best-matching lines and the note's `[[links]]` in one call.
+- `vault_read(path | [[link name]], offset)`: one note, paged.
+
+**Why not embeddings/RAG.** The expensive thing on free chat sites is the *number of model steps* (15-120 s each), not retrieval
+accuracy. Grep-then-read is 3-5 steps; one ranked search that already shows the snippets and links is 1-2. For a vault of tens to
+hundreds of linked notes, keyword ranking plus the link graph finds what a vector index would, with no embedding model, no index to
+rebuild, no stale vectors, and no extra dependency. If a vault grows to thousands of notes with vague wording, add an embedding
+retriever behind the same two tool names; nothing else changes.
+
+Safety: the server is read-only, resolves every path and refuses anything outside the vault (including symlinks and `..`), indexes
+only `.md` files under 1 MB and never writes. The instruction block tells the model that notes are reference material, not
+commands. Be aware the *content you retrieve is sent to the chat site* you are using, like everything else in the prompt.
+
+Measured (2026-10-25, Gemini): a question answerable only from the vault, asked from an unrelated folder, was answered correctly in
+3 steps / 71 s (`vault_search` then `vault_read`).
+
+## Skills
+A skill is `<name>/SKILL.md` (YAML frontmatter `name`, `description`, then instructions) in `<project>/.dsh/skills`,
+`<project>/.agents/skills`, `<data>/dsh-home/skills` or `~/.agents/skills`. The model sees only the name and description until it
+calls the `skill` tool, so skills are cheap to keep around. Measured: a project skill defining an output format was loaded and followed.
+You write them (or ask the agent to write one into the project); nothing creates skills automatically.
+
+## More MCP servers
+`freeharness` loads every `<config>/overlay.d/*.yml` as an extra harness patch. To add a server, drop a file there:
+```yaml
+- insert:
+    - id: mcp-github
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: github
+        transport: stdio
+        command: npx
+        args: ['-y', '@modelcontextprotocol/server-github']
+        env:
+          GITHUB_TOKEN: !!js process.env.GITHUB_TOKEN
+```
+A plain row (without `insert:`) only *patches* an existing entry and is skipped with "entry not found". Each server's tools are
+named `mcp__<serverName>__<tool>` and each adds prompt text, so add few. Third-party servers run with your permissions: review them.
+
+## Where things are stored
+| What | Where (Linux) |
+|---|---|
+| Session transcripts | `~/.local/share/freeharness/dsh-home/sessions/<workspace>/<session>/session.v4.jsonl.zstd` |
+| Global instructions | `~/.local/share/freeharness/dsh-home/AGENTS.md` |
+| Global skills | `~/.local/share/freeharness/dsh-home/skills/` |
+| MCP / extra overlays | `~/.config/freeharness/overlay.d/*.yml` |
+| Shim token | `~/.config/freeharness/shim-token` |
+| Logs, prompt history, eval results | `~/.local/state/freeharness/` |
+| Copies of your prompts | the chat sites' own conversation histories |
