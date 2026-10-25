@@ -3,6 +3,15 @@
 - id: llm-pi-ai
   config:
     providers:
+      # CONTEXT WINDOW (tokens) dsh believes every model has: ONE value, the YAML anchor `&context_window`
+      # on the first model below; the others alias it (`*context_window`). Replace an alias by a number to
+      # give one model its own value. It is deliberately huge: dsh-compaction-basic condenses older history
+      # into a model-written SUMMARY once a request nears ~80% of this window (and the pruner then shortens
+      # old tool results), so a small value makes the model forget files it already read. Measured with
+      # the real dsh (tests/test_dsh_context_window.py): at 80,000 the target file's text vanished from the
+      # later requests; at 1,000,000 every request keeps every tool result verbatim. The real limits are
+      # enforced by the site's own signals in the shim (full_markers, length errors, learned limits), and
+      # a context_length_exceeded reply from the shim still makes dsh condense and retry once.
       bridge:
         displayName: Free web bridge
         apiKeyEnv: BRIDGE_KEY
@@ -14,31 +23,31 @@
         models:
           - id: auto
             name: Auto (rotating free sites)
-            contextWindow: 16000
+            contextWindow: &context_window 1000000
             reasoningEfforts: false
           - id: gemini
             name: Gemini (web, pinned)
-            contextWindow: 16000
+            contextWindow: *context_window
             reasoningEfforts: false
           - id: perplexity
             name: Perplexity (web, pinned)
-            contextWindow: 16000
+            contextWindow: *context_window
             reasoningEfforts: false
           - id: qwen
             name: Qwen (web, pinned)
-            contextWindow: 16000
+            contextWindow: *context_window
             reasoningEfforts: false
           - id: grok
             name: Grok (web, pinned)
-            contextWindow: 16000
+            contextWindow: *context_window
             reasoningEfforts: false
           - id: chatgpt
             name: ChatGPT (web, pinned)
-            contextWindow: 16000
+            contextWindow: *context_window
             reasoningEfforts: false
           - id: deepseek
             name: DeepSeek (web, pinned)
-            contextWindow: 16000
+            contextWindow: *context_window
             reasoningEfforts: false
 
 # --- trimmed tools: every schema is re-sent (as prompt text) on every step of a

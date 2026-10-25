@@ -622,12 +622,17 @@ def main(argv=None) -> int:
                    "stage, on the same dsh session and workspace")
     p.add_argument("--providers", default="", help="providers for a shim this command starts (default: from --models)")
     p.add_argument("--no-shim", action="store_true", help="do not start or check the shim")
+    p.add_argument("--loop-guard", action="store_true",
+                   help="OFF by default (also FREEHARNESS_LOOP_GUARD=1): end a turn in which the same tool call returned the "
+                        "same output 3+ times in the last 8 calls and send a repair turn asking for a different next action")
     q = sub.add_parser("report", help="timeline, checklist and assessment of a run; writes report.md")
     q.add_argument("run", help="run id, a unique prefix, 'latest', or the run directory")
     q.add_argument("--judge", action="store_true", help="also ask the advisory LLM judge (one message; cannot change the result)")
     sub.add_parser("list", help="past runs")
     a = ap.parse_args(argv)
     if a.cmd == "run":
+        if a.loop_guard:
+            os.environ["FREEHARNESS_LOOP_GUARD"] = "1"       # read by loopguard.enabled in the staged engine
         from rich.console import Console
         return cmd_run(a, Console())
     if a.cmd == "report":

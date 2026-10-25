@@ -85,6 +85,19 @@ def checks() -> list[tuple[str, str, str]]:
         add(OK if health else WARN, "port 8766", "the shim is already running" if health else "in use by something else")
     finally:
         s.close()
+    # Prompt-size limits are never assumed; these are what the sites themselves showed (backends/limits.py).
+    from .backends.limits import Limits, default_path
+    lim = Limits(default_path())
+    for key in sorted(lim.data):
+        snap = lim.snapshot(key)
+        if snap["ceiling_chars"]:
+            add(OK, f"limit {key}", f"confirmed ceiling {snap['ceiling_chars']:,} chars (failed at {snap['suspect_max_chars']:,}, "
+                                    f"largest good {snap['known_good_chars']:,})")
+        elif snap["suspect_max_chars"]:
+            add(WARN, f"limit {key}", f"suspected: failed at {snap['suspect_max_chars']:,} chars, not confirmed yet "
+                                      f"(largest good {snap['known_good_chars']:,})")
+        else:
+            add(OK, f"limit {key}", f"no limit seen; largest good prompt {snap['known_good_chars']:,} chars")
     return out
 
 

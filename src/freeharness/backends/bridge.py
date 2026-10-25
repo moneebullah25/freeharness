@@ -329,6 +329,9 @@ class Session:
     owns_driver = True              # False when a shared Playwright driver was passed in
     _pw = ctx = page = None
     p = CHATGPT                     # provider; class default for the same reason
+    # The InterviewCopilot relay cuts a prompt over MAX_PROMPT (an assumed ceiling). The shim sends its own
+    # prompts and learns real limits from the site (limits.py), so it sets this False: never cut silently.
+    shrink_prompts = True
 
     def __init__(self, headless: bool, provider: Provider = CHATGPT,
                  user_data_dir: Path | str | None = None,
@@ -521,9 +524,10 @@ class Session:
         """Yield SSE events: {"t": delta} to append, {"reset": full} to replace.
         `should_stop()` is polled while waiting; True abandons the answer and
         stops the site generating (the caller has gone away)."""
-        question, note = shrink_prompt(question)
-        if note:
-            print(f"  prompt: {note}", file=sys.stderr)
+        if self.shrink_prompts:
+            question, note = shrink_prompt(question)
+            if note:
+                print(f"  prompt: {note}", file=sys.stderr)
         self.open_chat()
         if fresh:
             self.new_thread()
@@ -620,6 +624,26 @@ class Session:
                     f"answer did not finish within {self.p.answer_timeout}s "
                     f"({len(sent)} chars streamed)")
             time.sleep(POLL)
+
+    def chat_full(self) -> bool:
+        """True if the page shows the site's own "this chat is full / too long" notice (the provider's
+        `full_markers`). Looks only at alert-like elements and the last reply, never at the whole page: the
+        conversation itself (tool output, file contents) may legitimately contain those words."""
+        if not self.p.full_markers:
+            return False
+        js = """(css) => {
+            const sel = "[role=alert],[role=status],[aria-live=assertive],[class*=toast i],[class*=banner i],"
+                      + "[class*=notice i],[class*=warning i],[class*=error i],[class*=limit i],[data-sonner-toast]";
+            const out = Array.from(document.querySelectorAll(sel)).slice(-12).map(e => (e.innerText || "").slice(0, 400));
+            const turns = document.querySelectorAll(css);
+            if (turns.length) out.push((turns[turns.length - 1].innerText || "").slice(0, 400));
+            return out.join("\\n");
+        }"""
+        try:
+            text = (self.page.evaluate(js, self.p.sel["assistant"][0]) or "").lower()
+        except PWError:
+            return False
+        return any(m in text for m in self.p.full_markers)
 
     def page_state(self) -> str:
         """What the page actually shows, for an error that would otherwise guess.

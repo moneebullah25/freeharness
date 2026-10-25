@@ -39,7 +39,7 @@ freeharness -p "fix the failing test and run the suite"
 freeharness --model gemini           # pin one site;  default rotation is gemini,qwen
 freeharness --providers all          # every site that can run headless (see the warning below)
 ```
-Gemini keeps one chat per task and sends only what is new (`--sticky none` for a fresh chat per step); every session is also saved as
+Every provider keeps one chat per task and sends only what is new (`--sticky none` for a fresh chat per step; only Gemini is live-verified so far); every session is also saved as
 readable markdown (`freeharness transcript`).
 
 In the session: `/help` `/model` `/providers` `/new` `/sessions` `/resume <id>` `/status` `/quit`.

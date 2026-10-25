@@ -59,8 +59,8 @@ def test_listing_and_printing_by_unique_prefix(tmp_path, monkeypatch, capsys):
 
 def test_sticky_flag_values():
     keys = ["gemini", "qwen", "chatgpt"]
-    assert shim._sticky_keys("auto", keys) == ["gemini"], "only providers verified by the eval"
-    assert shim._sticky_keys("", keys) == ["gemini"]
+    assert shim._sticky_keys("auto", keys) == keys, "sticky is the default for EVERY provider"
+    assert shim._sticky_keys("", keys) == keys
     assert shim._sticky_keys("none", keys) == [] and shim._sticky_keys("off", keys) == []
     assert shim._sticky_keys("all", keys) == keys
     assert shim._sticky_keys("qwen, gemini", keys) == ["qwen", "gemini"]

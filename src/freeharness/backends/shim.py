@@ -8,10 +8,13 @@ sites driven through bridge.Session. Point an agent harness (DeepSeek Harness's
     python -m freeharness.backends.shim check   # does each site answer right now?
 
 WHY THIS EXISTS. A chat site returns text; a harness wants structured
-`tool_calls`. So each request is rendered into ONE prompt (tool list, a reply
-protocol, the whole conversation), sent to a fresh thread, and the reply is
-parsed back into `tool_calls`. The site never holds state: the harness's own
-log is the source of truth, which is what makes switching sites mid-task safe.
+`tool_calls`. So each request is rendered into a prompt (tool list, a reply
+protocol, the conversation), sent to a chat, and the reply is parsed back into
+`tool_calls`. The harness's own log is the source of truth, which is what makes
+switching sites mid-task safe. By default ONE chat is kept per task and only the
+new messages are sent (Router, "sticky"); a new chat with a compact history is
+started only on the site's own "full" signals, a history mismatch or an error.
+Prompt-size limits are never assumed: they are learned from the site (limits.py).
 
 TOOL-CALL PROTOCOL. The model is told to emit each call as a fenced code block
 holding one JSON object. Code, not prose, because chat UIs render markdown:
@@ -44,7 +47,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from .. import auth, paths
-from .providers import ELIGIBLE, PROVIDERS, STICKY_VERIFIED, Provider, resolve
+from .limits import NO_LIMIT, Limits
+from .limits import default_path as limits_path
+from .providers import ELIGIBLE, PROVIDERS, Provider, resolve
 
 MAX_BODY = 8_000_000
 
@@ -182,45 +187,100 @@ def render_prompt(messages: list[dict], tools: list[dict] | None) -> str:
     return "\n\n".join(parts)
 
 
-OMITTED = "[older output omitted to fit the provider's prompt limit]"
+# --- trimming a history for a FRESH chat (see Router: only used when a chat must be (re)started)
+TRIM_HEAD = 400            # chars kept from the start of an older tool result ...
+TRIM_TAIL = 200            # ... and from its end; the middle becomes a marker with the original length
+PROTECT_RESULTS = 5        # the newest tool results are kept verbatim ...
+PROTECT_CAP = 40_000       # ... up to this many chars each (a bigger one keeps its first 27k and last 13k)
+OMIT_TAG = "chars omitted ("            # appears in every shortened result (idempotence, tests)
 DROPPED = "[earlier conversation omitted to fit the provider's prompt limit]"
 
 
-def fit_messages(messages: list[dict], tools: list[dict] | None, budget: int) -> list[dict]:
-    """Shrink an over-long history so render_prompt() fits `budget` chars.
+def _shorten(text: str, head: int, tail: int) -> str:
+    """`text` with its middle replaced by a marker that states how much was cut and how long it was.
+    Returned unchanged when shortening would not make it smaller."""
+    t = text.strip()
+    if OMIT_TAG in t[head:len(t) - tail]:
+        return text
+    omitted = len(t) - head - tail
+    note = f"\n[… {omitted:,} chars omitted (of {len(t):,}); re-run the command if you need it]\n"
+    if omitted <= len(note) + 50:
+        return text
+    return t[:head] + note + t[len(t) - tail:]
 
-    Never touches system/developer messages or the latest user message. Order: (1) replace tool
-    result bodies with a marker, oldest first, newest last; (2) drop the oldest whole messages
-    before the latest user message (one marker is left behind). Returns `messages` unchanged
-    when it already fits; may still be too large (the router then raises PromptTooLarge)."""
-    def size(ms):
-        return len(render_prompt(ms, tools))
-    if size(messages) <= budget:
+
+def fit_messages(messages: list[dict], tools: list[dict] | None, budget: int | None) -> list[dict]:
+    """Shrink an over-long history so render_prompt() fits `budget` chars (None = no limit).
+
+    Never touches system/developer messages or the latest user message. The order is a promise to
+    the model that it does not lose what it just read:
+      1. OLDER tool results (not the newest PROTECT_RESULTS, not any after the last assistant message)
+         keep their first TRIM_HEAD and last TRIM_TAIL chars; the middle becomes
+         "[… N chars omitted (of M); re-run the command if you need it]". Oldest first, stopping as
+         soon as it fits.
+      2. Only if that is not enough: a protected result bigger than PROTECT_CAP is cut the same way.
+      3. Only if that is not enough: the oldest WHOLE messages go (one marker is left behind).
+    Returns `messages` itself when it already fits; may still be too large (the router then reports
+    context_length_exceeded so the harness can condense)."""
+    if budget is None:
+        return messages
+    size = len(render_prompt(messages, tools))
+    if size <= budget:
         return messages
     ms = [dict(m) for m in messages]
     last_user = max((i for i, m in enumerate(ms) if m.get("role") == "user"), default=-1)
-    for _i, m in enumerate(ms):
-        if m.get("role") == "tool" and _text(m.get("content")) != OMITTED:
-            m["content"] = OMITTED
-            if size(ms) <= budget:
+    last_asst = max((i for i, m in enumerate(ms) if m.get("role") == "assistant"), default=-1)
+    results = [i for i, m in enumerate(ms) if m.get("role") == "tool"]
+    protected = {i for i in results if i > last_asst} | set(results[-PROTECT_RESULTS:])
+
+    def cut(i, head, tail):
+        nonlocal size
+        old = _text(ms[i].get("content"))
+        new = _shorten(old, head, tail)
+        if new != old:
+            size += len(new.strip()) - len(old.strip())
+            ms[i]["content"] = new
+
+    for i in results:
+        if i not in protected:
+            cut(i, TRIM_HEAD, TRIM_TAIL)
+            if size <= budget:
+                return ms
+    for i in results:
+        if i in protected and len(_text(ms[i].get("content")).strip()) > PROTECT_CAP:
+            cut(i, PROTECT_CAP * 2 // 3, PROTECT_CAP // 3)
+            if size <= budget:
                 return ms
     if last_user > 0:
         keep = [m for m in ms[:last_user] if m.get("role") in ("system", "developer")]
         rest = [m for m in ms[:last_user] if m.get("role") not in ("system", "developer")]
         tail = ms[last_user:]
-        while rest:
-            rest.pop(0)
-            cand = keep + [{"role": "user", "content": DROPPED}] + rest + tail
-            if size(cand) <= budget:
-                return cand
-        return keep + [{"role": "user", "content": DROPPED}] + tail
+
+        def build(k):
+            return keep + [{"role": "user", "content": DROPPED}] + rest[k:] + tail
+        lo, hi = 1, len(rest)               # smallest number of oldest messages to drop that fits
+        if rest and len(render_prompt(build(hi), tools)) > budget:
+            return build(hi)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if len(render_prompt(build(mid), tools)) <= budget:
+                hi = mid
+            else:
+                lo = mid + 1
+        return build(lo) if rest else ms
     return ms
 
 
 # ------------------------------------------------------- sticky threads (see Router)
 
-STICKY_MAX_STEPS = 20          # a chat that has taken this many requests is replaced by a fresh one
-STICKY_MAX_CHARS = 60_000      # ... or has been sent this many characters in total
+# Safety nets only, NOT the normal way a chat ends: the normal ways are the site's own "full" notice, a
+# history that no longer matches (compaction / edit), a changed page or session, or an error.
+STICKY_MAX_STEPS = 400         # a chat that has taken this many requests is replaced by a fresh one
+STICKY_MAX_CHARS = 600_000     # ... or has been sent this many characters in total
+FRESH_TARGET = 0.5             # a fresh chat's prompt aims at this fraction of the limit (when one is known)
+FULL_REPLY_MAX = 1_500         # a "chat is full" notice is short; a longer reply is an answer
+LENGTH_WORDS = ("too long", "context length", "context window", "maximum context", "exceeds the maximum",
+                "token limit", "length limit", "too large", "prompt is too", "message is too")
 
 
 def _norm_calls(calls) -> list:
@@ -491,10 +551,22 @@ def parse_fault(spec):
     return out
 
 
-class Router:
-    """Owns one lazily-created Session per provider and the cooldown ledger."""
+class SiteFull(RuntimeError):
+    """The site answered with its own "this chat is full / the message is too long" notice."""
 
-    def __init__(self, keys, make_session, clock=time.monotonic, log=None, sticky=()):
+
+class Router:
+    """Owns one lazily-created Session per provider and the cooldown ledger.
+
+    Chat policy (see docs/MEMORY.md): with `sticky`, ONE chat per task is kept and only the new messages
+    are sent. A chat ends only when the SITE says it is full (provider.full_markers on the page or the
+    reply, or a length/context error), the history no longer matches what the chat has seen, the page or
+    session object changed, an error happened, or a safety net (STICKY_MAX_*) trips. The next request then
+    starts a NEW chat whose prompt is the compact history (fit_messages). Prompt-size limits are never
+    assumed: they are learned from failures (limits.Limits)."""
+
+    def __init__(self, keys, make_session, clock=time.monotonic, log=None, sticky=(), limits=None,
+                 debug_prompts=None):
         self.keys = list(keys)
         self.make_session = make_session      # (Provider) -> Session-like
         self.clock = clock
@@ -505,14 +577,19 @@ class Router:
         # Providers allowed to continue ONE chat across requests (send only what is new).
         self.sticky = set(sticky)
         self.threads: dict[str, dict] = {}     # provider -> what its current chat has seen
+        self.limits = limits if limits is not None else Limits()
         self.fault = parse_fault(os.environ.get("FREEHARNESS_FAULT"))   # test hook: {provider: Nth request fails}
         self.requests: dict[str, int] = {}
+        self.debug_prompts = debug_prompts if debug_prompts is not None else os.environ.get("SHIM_DEBUG_PROMPTS")
+        self._debug_last: list[str] = []
 
     def status(self) -> dict:
         now = self.clock()
         return {k: {"ready": self.until.get(k, 0) <= now,
                     "cooldown_s": max(0, round(self.until.get(k, 0) - now)),
-                    "reason": self.why.get(k, "")} for k in self.keys}
+                    "reason": self.why.get(k, ""),
+                    "sticky": k in self.sticky,
+                    "limits": self.limits.snapshot(k)} for k in self.keys}
 
     def _session(self, key):
         if key not in self.sessions:
@@ -539,31 +616,92 @@ class Router:
             return [model]
         raise KeyError(model)
 
-    def _plan(self, key, sess, prompt, messages, tools):
+    # -- sizes: learned, never assumed ----------------------------------------
+
+    def hard_limit(self, key) -> int:
+        """Largest message this provider is believed to take: its confirmed learned ceiling, else the
+        (huge) safety value. A prompt above it cannot be sent to this provider."""
+        c = self.limits.ceiling(key)
+        mp = PROVIDERS[key].max_prompt
+        return min(mp, c) if c else mp
+
+    def fresh_budget(self, key) -> int | None:
+        """Chars a FRESH chat's prompt should aim at, or None (= send the whole history)."""
+        c = self.limits.ceiling(key)
+        if c:
+            return int(c * FRESH_TARGET)
+        probe = self.limits.probe_budget(key)       # failed once, not yet confirmed: retry smaller
+        if probe:
+            return probe
+        mp = PROVIDERS[key].max_prompt
+        return int(mp * FRESH_TARGET) if mp < NO_LIMIT else None
+
+    @staticmethod
+    def _length_looking(prov: Provider, exc) -> bool:
+        if isinstance(exc, SiteFull):
+            return True
+        msg = str(exc).lower()
+        return any(m in msg for m in (*prov.full_markers, *prov.size_errors, *LENGTH_WORDS))
+
+    @staticmethod
+    def _reply_says_full(prov: Provider, text: str, blocks) -> bool:
+        t = (text or "").strip()
+        if not t or len(t) > FULL_REPLY_MAX or blocks:
+            return False
+        low = t.lower()
+        return any(m in low for m in prov.full_markers)
+
+    @staticmethod
+    def _page_full(sess) -> bool:
+        probe = getattr(sess, "chat_full", None)
+        if not probe:
+            return False
+        try:
+            return bool(probe())
+        except Exception:                # noqa: BLE001  a flaky probe must not fail a good answer
+            return False
+
+    # -- sticky planning ------------------------------------------------------
+
+    def _plan(self, key, sess, fresh_prompt, messages, tools, force_fresh=False):
         """(text to send, fresh?, request fingerprint) for one provider.
 
         Continue the provider's existing chat only if EVERYTHING still lines up: same session
         object, same page, the history we sent is an unchanged prefix of the new request, the next
-        message is the very reply we returned, and the chat is not too long. Otherwise a fresh
-        chat gets the full prompt, which is exactly the non-sticky behaviour."""
+        message is the very reply we returned, and no safety net tripped. Otherwise a fresh chat gets
+        `fresh_prompt()` (the compact history), which is exactly the non-sticky behaviour."""
         if key not in self.sticky or messages is None:
-            return prompt, True, None
+            return fresh_prompt(), True, None
         th = self.threads.get(key)
+        if force_fresh:
+            return fresh_prompt(), True, {"fresh": True}
         url = getattr(sess, "current_url", lambda: None)()
         k = th["k"] if th else 0
-        ok = bool(
-            th and th["session"] is sess and th["reply_fp"] and url and url == th["url"]
-            and th["steps"] < STICKY_MAX_STEPS and th["chars"] < STICKY_MAX_CHARS
-            and len(messages) > k + 1 and messages[k].get("role") == "assistant"
-            and all(m.get("role") in ("tool", "user") for m in messages[k + 1:])
-            and reply_fingerprint(_text(messages[k].get("content")), messages[k].get("tool_calls")) == th["reply_fp"]
-            and history_fingerprint(messages[:k], tools) == th["prefix_fp"])
-        if not ok:
+        checks = [
+            ("no chat yet", lambda: bool(th)),
+            ("session object changed", lambda: th["session"] is sess),
+            ("no reply fingerprint", lambda: bool(th["reply_fp"])),
+            ("page address changed", lambda: bool(url) and url == th["url"]),
+            ("step cap", lambda: th["steps"] < STICKY_MAX_STEPS),
+            ("char cap", lambda: th["chars"] < STICKY_MAX_CHARS),
+            ("no new messages", lambda: len(messages) > k + 1),
+            ("next message is not our reply", lambda: messages[k].get("role") == "assistant"),
+            ("unseen assistant message", lambda: all(m.get("role") in ("tool", "user") for m in messages[k + 1:])),
+            ("our reply was edited", lambda: reply_fingerprint(
+                _text(messages[k].get("content")), messages[k].get("tool_calls")) == th["reply_fp"]),
+            ("history/tools changed", lambda: history_fingerprint(messages[:k], tools) == th["prefix_fp"]),
+        ]
+        why = next((name for name, test in checks if not test()), None)
+        delta = ""
+        if why is None:
+            delta = render_delta(messages[k + 1:], tools, tool_names(messages[:k + 1]))
+            if len(delta) > self.hard_limit(key) * 0.9:
+                why = "new messages bigger than the provider's limit"
+        if why is not None:
             if th:
-                self.log(f"shim: {key} chat not continued (history changed or chat is full); starting a new one")
-            return prompt, True, {"fresh": True}
-        return (render_delta(messages[k + 1:], tools, tool_names(messages[:k + 1])), False,
-                {"fresh": False, "steps": th["steps"], "chars": th["chars"]})
+                self.log(f"shim: {key} chat not continued ({why}); starting a new one with a compact history")
+            return fresh_prompt(), True, {"fresh": True}
+        return delta, False, {"fresh": False, "steps": th["steps"], "chars": th["chars"]}
 
     def _remember(self, key, sess, messages, tools, sent_chars, plan):
         """Record what this chat has seen (the reply fingerprint arrives later via note_reply)."""
@@ -579,62 +717,142 @@ class Router:
         if th:
             th["reply_fp"] = reply_fingerprint(content, calls)
 
+    def _debug_prompt(self, key, fresh, send):
+        """SHIM_DEBUG_PROMPTS=<file>: <file> holds the FULL text of the last 3 prompts sent (rewritten each
+        time, owner-only); <file>.index gets one summary line per prompt (provider, fresh/sticky, size,
+        first and last 300 chars). Prompts contain whatever the agent read; the token is never part of
+        a prompt and is never written."""
+        path = self.debug_prompts
+        if not path:
+            return
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        mode = "fresh" if fresh else "sticky"
+        self._debug_last = (self._debug_last + [
+            f"===== {stamp} provider={key} mode={mode} chars={len(send)} =====\n{send}\n"])[-3:]
+        try:
+            p = Path(path)
+            tmp = p.with_name(p.name + ".tmp")
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write("".join(self._debug_last))
+            os.replace(tmp, p)
+            idx = p.with_name(p.name + ".index")
+            fd = os.open(idx, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "a") as f:
+                f.write(json.dumps({"time": stamp, "provider": key, "mode": mode, "chars": len(send),
+                                    "first": send[:300], "last": send[-300:]}) + "\n")
+        except OSError as e:
+            self.log(f"shim: cannot write SHIM_DEBUG_PROMPTS ({e})")
+
     def run(self, model: str, prompt: str, should_stop=None, *, messages=None, tools=None):
         """Generator of ("provider", key) once, then ("t", text) events, then
         ("done", code_blocks). Fails over only until the first text is yielded.
-        `should_stop()` lets the caller abandon the generation (client left)."""
+        `should_stop()` lets the caller abandon the generation (client left).
+
+        `prompt` is the whole history rendered (used as is when `messages` is None or the provider has no
+        known limit); with `messages` the router renders a compact history itself whenever a fresh chat is
+        needed, so the harness's own messages are never pre-trimmed (that would break the sticky prefix)."""
         keys = self.candidates(model)
         now = self.clock()
-        fits = [k for k in keys if len(prompt) <= PROVIDERS[k].max_prompt]
+        cache: dict = {}
+
+        def fresh_for(key):
+            budget = self.fresh_budget(key)
+            if messages is None or budget is None:
+                return prompt
+            if budget not in cache:
+                cache[budget] = render_prompt(fit_messages(messages, tools, budget), tools)
+            return cache[budget]
+
+        fits = [k for k in keys if len(fresh_for(k)) <= self.hard_limit(k)]
         if not fits:
             raise PromptTooLarge(
-                f"prompt is {len(prompt):,} chars; the largest budget among {keys} is "
-                f"{max(PROVIDERS[k].max_prompt for k in keys):,}")
+                f"prompt is {min(len(fresh_for(k)) for k in keys):,} chars even after trimming; "
+                f"the largest limit among {keys} is {max(self.hard_limit(k) for k in keys):,}")
         ready = [k for k in fits if self.until.get(k, 0) <= now]
         if not ready:
             raise AllCoolingDown(min(self.until.get(k, now) for k in fits) - now)
 
         last = None
+        length_failures = 0
         for key in ready:
+            prov = PROVIDERS[key]
             started = False
             sess = None
-            try:
-                sess = self._session(key)
-                send, fresh, plan = self._plan(key, sess, prompt, messages, tools)
-                self.log(f"shim: -> {key} ({len(send):,} chars{'' if fresh else ', same chat'})")
-                self.threads.pop(key, None)            # unknown until this request finishes cleanly
-                yield ("provider", key)
-                self.requests[key] = self.requests.get(key, 0) + 1
-                if self.fault.get(key) == self.requests[key]:
-                    raise RuntimeError("You've reached your limit (injected quota fault)")
-                for ev in sess.ask(send, fresh=fresh, should_stop=should_stop):
-                    if "t" in ev:
+            force_fresh = False
+            fresh, send, plan = True, "", None
+            for attempt in (0, 1):
+                try:
+                    sess = self._session(key)
+                    send, fresh, plan = self._plan(key, sess, lambda k=key: fresh_for(k), messages, tools,
+                                                   force_fresh)
+                    self.log(f"shim: -> {key} ({len(send):,} chars{'' if fresh else ', same chat'})")
+                    self._debug_prompt(key, fresh, send)
+                    self.threads.pop(key, None)            # unknown until this request finishes cleanly
+                    yield ("provider", key)
+                    self.requests[key] = self.requests.get(key, 0) + 1
+                    if self.fault.get(key) == self.requests[key]:
+                        raise RuntimeError("You've reached your limit (injected quota fault)")
+                    hold = key in self.sticky and messages is not None    # a "chat is full" reply is discarded
+                    held, text = [], ""
+                    for ev in sess.ask(send, fresh=fresh, should_stop=should_stop):
+                        text = text + ev["t"] if "t" in ev else ev["reset"]
+                        if hold:
+                            held.append(ev)
+                        else:
+                            started = True
+                            yield ("t", ev["t"]) if "t" in ev else ("reset", ev["reset"])
+                    blocks = sess.code_blocks()
+                    if self._reply_says_full(prov, text, blocks):
+                        raise SiteFull(f"{prov.label} says the chat is full or the message too long: "
+                                       f"{text.strip()[:120]!r}")
+                    self.limits.good(key, len(send))
+                    page_full = key in self.sticky and self._page_full(sess)
+                    for ev in held:
                         started = True
-                        yield ("t", ev["t"])
-                    else:
-                        started = True
-                        yield ("reset", ev["reset"])
-                if key in self.sticky and messages is not None:
-                    self._remember(key, sess, messages, tools, len(send), plan)
-                yield ("done", sess.code_blocks())
-                return
-            except GeneratorExit:
-                self.threads.pop(key, None)            # partial reply: that chat can no longer be trusted
-                stop = getattr(sess, "stop_generation", None)
-                if stop:                       # the consumer left: stop burning free-tier quota
-                    try:
-                        stop()
-                    except Exception:          # noqa: BLE001, S110  best-effort cleanup
-                        pass
-                raise
-            except Exception as e:           # noqa: BLE001
-                if started:
-                    raise                      # output already left: cannot fail over
-                self.threads.pop(key, None)
-                kind = classify(e)
-                self.log(f"shim: {key} failed ({kind}): {str(e)[:160]}")
-                self._cool(key, kind, e)
-                last = e
+                        yield ("t", ev["t"]) if "t" in ev else ("reset", ev["reset"])
+                    if key in self.sticky and messages is not None:
+                        if page_full:
+                            self.log(f"shim: {key} shows its chat-full notice; the next request starts a new chat")
+                        else:
+                            self._remember(key, sess, messages, tools, len(send), plan)
+                    yield ("done", blocks)
+                    return
+                except GeneratorExit:
+                    self.threads.pop(key, None)            # partial reply: that chat can no longer be trusted
+                    stop = getattr(sess, "stop_generation", None)
+                    if stop:                       # the consumer left: stop burning free-tier quota
+                        try:
+                            stop()
+                        except Exception:          # noqa: BLE001, S110  best-effort cleanup
+                            pass
+                    raise
+                except Exception as e:           # noqa: BLE001
+                    if started:
+                        raise                      # output already left: cannot fail over
+                    self.threads.pop(key, None)
+                    length = self._length_looking(prov, e) or (sess is not None and self._page_full(sess))
+                    if length and attempt == 0:
+                        if not fresh:
+                            # the chat we were continuing is full: same site, NEW chat, compact history
+                            self.log(f"shim: {key} chat is full ({str(e)[:100]}); starting a new one with a compact history")
+                            force_fresh = True
+                            continue
+                        if self.limits.failed_length(key, len(send)):
+                            smaller = fresh_for(key)
+                            if len(smaller) < 0.9 * len(send):
+                                self.log(f"shim: {key} rejected a {len(send):,}-char prompt as too long; "
+                                         f"retrying in a new chat with {len(smaller):,}")
+                                force_fresh = True
+                                continue
+                    kind = "error" if length else classify(e)
+                    length_failures += 1 if length else 0
+                    self.log(f"shim: {key} failed ({kind}): {str(e)[:160]}")
+                    self._cool(key, kind, e)
+                    last = e
+                    break
+        if length_failures and length_failures == len(ready):
+            raise PromptTooLarge(f"every provider says the prompt/chat is too long: {last}")
         raise ProvidersFailed(f"all providers failed; last error: {last}")
 
     def close(self):
@@ -830,11 +1048,9 @@ class Handler(BaseHTTPRequestHandler):
             self._reply(model, stream, want_usage, local_title(messages), [], 0, "title")
             return
 
-        try:
-            budget = max(PROVIDERS[k].max_prompt for k in self.router.candidates(model))
-            messages = fit_messages(messages, tools, budget)
-        except KeyError:
-            pass                       # unknown model: reported below
+        # The history is NOT trimmed here: the router sends only new messages to a chat it continues, and
+        # trims (fit_messages) only when it must start a fresh chat. Trimming here would change the
+        # already-seen prefix on every request and defeat sticky chats.
         prompt = render_prompt(messages, tools)
         try:
             events = stream_from_worker(
@@ -958,7 +1174,7 @@ def _sticky_keys(spec: str, keys) -> list[str]:
     if spec in ("none", "off", "no"):
         return []
     if spec == "auto":
-        return [k for k in keys if k in STICKY_VERIFIED]
+        return list(keys)              # sticky is the default for EVERY provider; STICKY_VERIFIED only says which were measured live
     chosen = list(keys) if spec == "all" else [k.strip() for k in spec.split(",") if k.strip()]
     bad = [k for k in chosen if k not in keys]
     if bad:
@@ -987,6 +1203,11 @@ def serve(host, port, keys, headless, sticky=()):
     shared = {}     # the one logged-in browser; `shared` providers are tabs of it
 
     def make(prov: Provider):
+        s = _make(prov)
+        s.shrink_prompts = False       # prompts are sized by the router from what the site reports, never cut silently
+        return s
+
+    def _make(prov: Provider):
         if not prov.shared:
             if prov.channel and not prov.profile.is_dir():
                 raise RuntimeError(f"{prov.key} needs you to log in: run `freeharness login {prov.key}` first")
@@ -1003,7 +1224,7 @@ def serve(host, port, keys, headless, sticky=()):
                                             user_data_dir=paths.chrome_profile(), channel="chrome")
         return root.tab(prov)
 
-    Handler.router = Router(keys, make, sticky=sticky)
+    Handler.router = Router(keys, make, sticky=sticky, limits=Limits(limits_path()))
     Handler.token = None if os.environ.get("FREEHARNESS_NO_AUTH") else auth.load_or_create_token()
     Handler.worker = Worker()
     srv = ThreadingHTTPServer((host, port), Handler)
@@ -1063,7 +1284,8 @@ def main():
         sp.add_argument("--headed", action="store_true", help="show the browser windows")
         sp.add_argument("--sticky", default=os.environ.get("FREEHARNESS_STICKY", "auto"),
                         help="providers (comma-separated, or 'all') that continue ONE chat per task and send only "
-                             "what is new instead of a fresh chat with the whole history on every step: 'auto' (verified by the eval), 'all', 'none' or a list")
+                             "what is new instead of a fresh chat with the whole history on every step. Default 'auto' "
+                             "= every provider in --providers (only Gemini is live-verified); 'none' turns it off")
         if name == "serve":
             sp.add_argument("--host", default="127.0.0.1")
             sp.add_argument("--port", type=int, default=8766)

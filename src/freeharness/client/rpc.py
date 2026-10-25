@@ -278,12 +278,14 @@ class Runtime:
                                                "contentBlocks": [{"type": "text", "text": text}]})["messageId"]
 
     def run_turn(self, session_id: str, text: str, on_event=None, on_tick=None,
-                 timeout: float = 900.0, max_steps: int | None = None) -> TurnResult:
+                 timeout: float = 900.0, max_steps: int | None = None, stop_when=None) -> TurnResult:
         """Send one prompt and block until its turn ends. `on_event(event)` sees
         each log event as it is recorded; `on_tick(elapsed_s)` fires ~4x/second.
         dsh has no step limit and no cancel, so `max_steps` is enforced here: when
         the turn starts step max_steps+1 it is abandoned (runtime restarted, session
         resumed) and a result with reason {"kind": "max_steps", "limit": N} is returned.
+        `stop_when(event)` may return a dict to end the turn early (same abandon + resume as max_steps); the
+        result's reason is then {"kind": "loop_guard", **that dict} (the loop guard, off unless enabled).
         Raises RuntimeDied if the runtime exits, TimeoutError past `timeout`."""
         while True:                                       # stale events of an earlier turn
             try:
@@ -338,6 +340,13 @@ class Runtime:
                     final = txt
             if on_event:
                 on_event(ev)
+            if stop_when and t != "turn/end":
+                why = stop_when(ev)
+                if why:
+                    self.abandon(session_id)
+                    reason = {"kind": "loop_guard", **why}
+                    return TurnResult(False, reason, final, steps, calls, errors,
+                                      time.monotonic() - start, seen)
             if t == "turn/end":
                 reason = d.get("reason") or {"kind": "unknown"}
                 break

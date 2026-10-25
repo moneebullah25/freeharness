@@ -22,10 +22,10 @@ import time
 from rich.console import Console
 from rich.rule import Rule
 
-from .. import memory, memory_cmd, paths, sessions
+from .. import loopguard, memory, memory_cmd, paths, sessions
 from ..transcript import Transcript
 from .approval import TerminalApprover
-from .render import Renderer, turn_outcome
+from .render import Renderer, _esc, turn_outcome
 from .rpc import (DSH_HOME, Runtime, RuntimeDied, RpcError, ensure_shim,
                   shim_health)
 
@@ -132,11 +132,19 @@ class App:
         with self.c.status(label["text"]) as status:
             if self.approver:
                 self.approver.status = status               # paused while the approval question is asked
+            watch = loopguard.Watch() if loopguard.enabled(getattr(self.args, "loop_guard", False)) else None
+            warned = set()
+
             def on_event(ev):
                 self.tr.event(ev)
                 new = rend.handle(ev)
                 if new:
                     label["text"] = new
+                rep = watch.feed(ev) if watch else None
+                if rep and (rep["name"], rep["count"]) not in warned:
+                    warned.add((rep["name"], rep["count"]))
+                    self.c.print(f"[bold yellow]! possible loop:[/] {_esc(loopguard.describe(rep))}. "
+                                 "Press Ctrl-C to stop, or tell the model to try something different.")
 
             def on_tick(elapsed):
                 status.update(f"{label['text']}  [dim]{elapsed:.0f}s[/]")
@@ -289,8 +297,11 @@ def main(argv=None) -> int:
     ap.add_argument("--providers", default="gemini,qwen",
                     help="providers for a shim this client starts: comma-separated, or 'all' (default: %(default)s)")
     ap.add_argument("--sticky", default="auto",
-                    help="providers that keep ONE chat per task and send only what is new: 'auto' (those verified by the eval: "
-                         "gemini), 'all', 'none', or a comma-separated list (default: auto)")
+                    help="providers that keep ONE chat per task and send only what is new: 'auto' (every provider; only "
+                         "gemini is live-verified), 'all', 'none' (a fresh chat per step), or a comma-separated list (default: auto)")
+    ap.add_argument("--loop-guard", action="store_true",
+                    help="OFF by default (also FREEHARNESS_LOOP_GUARD=1): warn when the same tool call returned the same "
+                         "output 3+ times in the last 8 calls")
     ap.add_argument("--max-steps", type=int, default=60, metavar="N",
                     help="abandon a turn that starts more than N model steps; 0 = no limit (default: %(default)s)")
     ap.add_argument("--turn-timeout", type=float, default=900.0, metavar="S",

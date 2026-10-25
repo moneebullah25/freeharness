@@ -14,6 +14,7 @@ from http.server import ThreadingHTTPServer
 
 from freeharness import auth
 from freeharness.backends import shim
+from freeharness.backends.limits import NO_LIMIT, Limits
 
 TOOLS = [
     {"type": "function", "function": {
@@ -505,13 +506,16 @@ def test_no_failover_after_output_has_started():
 
 
 def test_oversize_prompt_skips_small_providers_then_errors():
-    small = shim.PROVIDERS["perplexity"]
-    r = router({"gemini": FakeSession(reply="big ok"), "perplexity": FakeSession()})
-    big = "x" * (small.max_prompt + 1)
-    if shim.PROVIDERS["gemini"].max_prompt > small.max_prompt:
-        assert ("provider", "gemini") in collect(r, "auto", big)
+    lim = Limits()
+    lim.failed_length("perplexity", 10_000)
+    lim.good("perplexity", 3_000)                     # failure at 10k, then a smaller success: confirmed
+    assert lim.ceiling("perplexity") == 8_000
+    r = shim.Router(("gemini", "perplexity"), lambda prov: {"gemini": FakeSession(reply="big ok"),
+                                                              "perplexity": FakeSession()}[prov.key],
+                    clock=Clock(), log=lambda m: None, limits=lim)
+    assert ("provider", "gemini") in collect(r, "auto", "x" * 9_000)
     try:
-        collect(r, "auto", "x" * 10_000_000)
+        collect(r, "auto", "x" * (NO_LIMIT + 1))
         assert False
     except shim.PromptTooLarge:
         pass
@@ -605,7 +609,7 @@ def test_http_errors_map_to_statuses():
         code, body, hdr = post(url, {"model": "auto", "messages": msgs})
         assert code == 429 and int(hdr["Retry-After"]) > 0, (code, body)
         code, body, _ = post(url, {"model": "auto",
-                                   "messages": [{"role": "user", "content": "x" * 500_000}]})
+                                   "messages": [{"role": "user", "content": "x" * (NO_LIMIT + 1)}]})
         assert code == 400 and json.loads(body)["error"]["code"] == "context_length_exceeded"
         assert post(url, {"model": "auto", "messages": [
             {"role": "user", "content": "x" * (shim.MAX_BODY + 1)}]})[0] == 413
@@ -760,42 +764,6 @@ def _long_history(n=6, size=5000):
         ms.append({"role": "tool", "tool_call_id": f"c{i}", "content": f"BODY{i}" + "z" * size})
     ms.append({"role": "user", "content": "LATEST-QUESTION"})
     return ms
-
-
-def test_fit_messages_marks_old_tool_output_and_keeps_system_and_latest_user():
-    ms = _long_history()
-    full = len(shim.render_prompt(ms, TOOLS))
-    assert shim.fit_messages(ms, TOOLS, full) is ms
-    out = shim.fit_messages(ms, TOOLS, full - 12_000)
-    p = shim.render_prompt(out, TOOLS)
-    assert len(p) <= full - 12_000
-    assert "SYSTEM-RULES" in p and "LATEST-QUESTION" in p and shim.OMITTED in p
-    assert "BODY5" in p and "BODY0" not in p           # newest result kept, oldest elided
-    assert "BODY0" in ms[3]["content"]                 # input not mutated
-    # extreme budget: whole old messages go, system + latest user stay
-    tiny = shim.fit_messages(ms, TOOLS, len(shim.render_prompt([ms[0], ms[-1]], TOOLS)) + 200)
-    p = shim.render_prompt(tiny, TOOLS)
-    assert "SYSTEM-RULES" in p and "LATEST-QUESTION" in p and shim.DROPPED in p
-    assert "first ask" not in p
-    print("  fit_messages ........ ok")
-
-
-def test_http_long_history_is_trimmed_not_rejected():
-    sess = FakeSession()
-    srv, base = serve_with({"gemini": sess, "perplexity": FakeSession()})
-    try:
-        ms = _long_history(n=30, size=5000)
-        assert len(shim.render_prompt(ms, TOOLS)) > shim.PROVIDERS["gemini"].max_prompt
-        body = json.dumps({"model": "gemini", "tools": TOOLS, "messages": ms}).encode()
-        req = urllib.request.Request(base + "/v1/chat/completions", body,
-                                     {"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=20).read()
-        sent = sess.prompts[-1]
-        assert len(sent) <= shim.PROVIDERS["gemini"].max_prompt
-        assert "LATEST-QUESTION" in sent and "SYSTEM-RULES" in sent and shim.OMITTED in sent
-        print("  long history trimmed  ok")
-    finally:
-        srv.shutdown()
 
 
 if __name__ == "__main__":

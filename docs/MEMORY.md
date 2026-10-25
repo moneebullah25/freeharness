@@ -59,28 +59,71 @@ A plain row (without `insert:`) only *patches* an existing entry and is skipped 
 named `mcp__<serverName>__<tool>` and each adds prompt text, so add few. Third-party servers run with your permissions: review them.
 
 ## One chat per task ("sticky" chats) and the readable record
-By default every model step used to open a fresh chat on the site and resend the whole history. Now, for providers that passed the
-eval in this mode (**Gemini**), the shim keeps ONE chat per task and sends only what is new (the tool results or your next message,
-plus a one-line reminder of the tool format; the full rules were sent once at the start). Measured 2026-10-25: a 5-step task sent
-~9K characters (the fresh-chat equivalent, ~39K, is computed from the prompt sizes of earlier runs, not a second run), and the Gemini eval stayed 8/8 while taking 388 s instead of 532 s.
+Sticky chats are the **default for every provider** (Gemini, Qwen, DeepSeek, ChatGPT, Grok, Perplexity): the shim keeps ONE chat per
+task and sends only what is new (the tool results or your next message, plus a one-line reminder of the tool format; the full rules
+were sent once at the start). `--sticky none` (or `FREEHARNESS_STICKY=none`) switches it off: a fresh chat with the whole history on
+every step, which is what used to pile up hundreds of chats on the site and re-sent a 60k-char prompt each time.
 
-The shim continues a chat only if everything still lines up: same browser tab and page, the history it sent is an unchanged prefix
-of the new request, the next message is exactly the reply it returned, same tool list, and the chat has taken fewer than 20 steps
-and 60,000 characters. Anything else (Ctrl-C, `/resume`, compaction, an error, a client that left mid-reply) starts a **fresh chat
-with the full history**, which is also what happens when a provider hits its limit and another takes over: the new site gets the
-whole conversation from the harness's log. Control it with `--sticky auto|none|all|gemini,qwen`.
+**Honest status.** Only **Gemini** has been measured live in this mode (2026-10-25: a 5-step task sent ~9K characters, the fresh-chat
+equivalent ~39K, computed from earlier prompt sizes rather than a second run; the Gemini eval stayed 8/8 in 388 s instead of 532 s).
+For every other provider sticky is **default-on but NOT live-verified**, and the "chat is full" wording below is from memory of each
+site and unverified until it has been seen. `STICKY_VERIFIED` in `providers.py` now only records which providers were measured live;
+it no longer decides the default.
+
+**When a chat is continued, and when a new one starts.** The shim continues a chat while everything lines up: same browser tab and
+page, the history it sent is an unchanged prefix of the new request, the next message is exactly the reply it returned, same tool
+list. A session that merely **grows never** starts a new chat. A NEW chat (same site) starts only when:
+- the site says the chat is full: the provider's `full_markers` (lowercase substrings of the site's own notice) appear in a short
+  reply (<= 1,500 chars, no tool-call block), in an alert/banner on the page, or in the error of a failed ask, or the site reports a
+  length/context error. The notice is never passed to the model as an answer; the same request is re-sent in the new chat;
+- the history no longer matches (dsh compaction, an edited message, `/resume`, Ctrl-C), the page address or the browser session changed,
+  the tool list changed, an error happened, or a client left mid-reply;
+- a safety net trips: 400 requests or 600,000 characters in one chat (generous on purpose; not the normal way a chat ends).
+Why it started a new chat is logged in `shim.log` ("chat not continued (<reason>)"). When a provider hits its limit and another takes
+over, the new site gets the whole conversation from the harness's log.
+
+**What a new chat is sent: a compact history.** `fit_messages` keeps system messages and the latest user message, and shortens
+**older tool results** oldest first: the first 400 and last 200 characters stay, the middle becomes
+`[... 8,214 chars omitted (of 8,814); re-run the command if you need it]`. The newest 5 results, and every result after the last
+assistant message, stay **verbatim** (up to 40,000 characters each). Whole old messages are dropped only if that is still not enough.
+It only runs when a limit is known (below); otherwise the whole history is sent as is.
+
+**Prompt-size limits are learned, never assumed.** No provider has an assumed ceiling (`max_prompt` is a safety value of 2,000,000
+characters). `<state>/limits.json` records per provider `known_good_chars` (largest message that got a real answer) and, only after a
+failure with a length-looking signal on a FRESH chat at a size above anything that worked, `suspect_max_chars`. One failure is only a
+suspicion: the shim retries once in a new chat at half that size; if that succeeds the limit is **confirmed** and a ceiling of 80% of
+the failing size is used, with fresh-chat prompts aimed at 50% of it. Shown in `/health` (`providers.<key>.limits`) and
+`freeharness doctor`. If a fresh chat still says "too long" and nothing can be shortened, the shim answers `context_length_exceeded`,
+which makes dsh condense and retry once.
+
+**dsh's own condensation** (`dsh-compaction-basic`, the tool-result pruner) is kept out of the way: `contextWindow` in
+`data/dsh.patch.yml` is one constant, `&context_window 1000000` (per model overridable). Measured with the real dsh
+(`tests/test_dsh_context_window.py`, a scripted 32-request session, no live site): at 1,000,000 every request still contains a file read
+at step 1 verbatim (request sizes 1.6k -> 122k chars, no extra summary requests); at 80,000 dsh condensed, added 2 summary requests and the
+file text vanished from the later requests. The old value 16,000 did **not** trigger condensation (dsh's trigger is
+`min(0.8*W, W - output - 65,536)`, negative for 16,000, so it skips it): the blanking seen live came from the shim trimming at 60,000
+characters, not from dsh.
+
+**Auditing a run.** `SHIM_DEBUG_PROMPTS=<file>` makes the shim write the FULL text of the last 3 prompts it sent to `<file>` (rewritten each
+time, owner-only) and one summary line per prompt (provider, fresh/sticky, size, first and last 300 characters) to `<file>.index`.
+The prompts contain whatever the agent read; the shim token is never part of a prompt and is never written.
+
+**Loop guard (off by default).** `--loop-guard` or `FREEHARNESS_LOOP_GUARD=1`: when the same tool call (name + arguments) returned the same
+output 3+ times in the last 8 calls, the interactive client prints a warning, and the `oss run` stage engine ends that turn and sends a
+repair turn that quotes the call and says it returned the same output each time and asks for the next DIFFERENT action (it never names
+one; at most 2 such turns per stage turn). Off until the root fix above is confirmed live, so that it cannot mask a model that has lost its data.
 
 Every prompt, reply, tool call and result is also written, as it happens, to a readable markdown file per session:
 `freeharness transcript` lists them and `freeharness transcript <id>` prints one (`~/.local/share/freeharness/transcripts/`, owner-only,
 tool results capped at 20,000 characters). It is the file to open or paste into any chat by hand. It contains whatever the agent read.
 
 ## Long sessions and prompt limits
-dsh condenses old history itself when its context fills (compaction, inside the harness). On top of that the shim now guards each
-provider's `max_prompt`: if the rendered prompt is too big it first replaces the oldest tool-result bodies with
-`[older output omitted to fit the provider's prompt limit]` (newest kept), then drops the oldest whole messages (one
-`[earlier conversation omitted ...]` marker). System/developer messages and the latest user message are never touched. Only if that
-still does not fit does the shim return `context_length_exceeded` (PromptTooLarge). **Unit-tested only** (`fit_messages`, and an HTTP
-test with a fake provider); it has not been exercised with the real dsh or a live site. Verified with the real dsh and `tests/fake_openai.py` (own port, temp DSH_HOME, no browser; `tests/test_context_e2e.py`, skipped if
+dsh condenses old history itself when its context fills (compaction, inside the harness); with `contextWindow` at 1,000,000 that
+effectively never starts early (see above), and a `context_length_exceeded` from the shim still makes it condense once and retry.
+The shim itself trims only for a FRESH chat and only when a limit has been learned from the site (see above): older tool results are
+shortened to head + tail with a marker, the newest are kept verbatim, whole old messages are dropped last. System/developer messages
+and the latest user message are never touched. **Unit-tested only** (`fit_messages`, fake sessions, and the real dsh with a scripted
+fake model in `tests/test_dsh_context_window.py`); not exercised with a live site. Verified with the real dsh and `tests/fake_openai.py` (own port, temp DSH_HOME, no browser; `tests/test_context_e2e.py`, skipped if
 dsh/node is missing): the captured request contains project `AGENTS.md`, the global `dsh-home/AGENTS.md`, the skill name and
 description, the `skill` tool and `mcp__vault__vault_search`/`vault_read`; after `session/resume` in a fresh runtime the request replays
 the earlier user message before the new one; a transcript appended across a resume has one header and both turns in order (that part

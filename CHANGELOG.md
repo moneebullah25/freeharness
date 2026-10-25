@@ -7,7 +7,18 @@ releases may include breaking changes; they will be listed under **Changed**.
 
 ## [Unreleased]
 
+### Changed
+- One chat per task is now the default for EVERY provider (`--sticky auto` = all; `--sticky none` is the off switch). Only Gemini is
+  live-verified. A chat ends on the site's own "full" signals (new per-provider `full_markers`), a history mismatch or an error, not
+  on a step/char cap (now safety nets: 400 requests / 600,000 chars); the shim no longer pre-trims the harness's messages.
+- No assumed prompt limits: `max_prompt` is a 2,000,000-char safety value; real limits are learned from site failures and kept in
+  `<state>/limits.json` (`/health`, `freeharness doctor`). The InterviewCopilot 100k cut no longer applies to shim prompts.
+- A history for a fresh chat keeps the head and tail of older tool results with an "N chars omitted" marker instead of blanking them;
+  the newest results stay verbatim. `contextWindow` in `data/dsh.patch.yml` is now one constant of 1,000,000 tokens.
+
 ### Added
+- `SHIM_DEBUG_PROMPTS=<file>`: the last 3 full prompts sent (owner-only) plus a one-line-per-prompt index.
+- Loop guard (off by default; `--loop-guard` / `FREEHARNESS_LOOP_GUARD=1`): `loopguard.py`.
 - Staged workflow engine for `freeharness oss run` (new `oss_flow.py`, stage checks in `eval/oss_stage.py`): the default is now six
   stages (setup, hunt, dupcheck, issue, fix, pr), each ONE short prompt on the same dsh session, built from `state.json`, with a
   step budget and a deterministic acceptance check (oss_judge items plus stage checks: a recorded repro run whose output shows the

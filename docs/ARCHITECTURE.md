@@ -19,6 +19,8 @@ Key decisions (each was measured, not assumed; see docs/PROVIDERS.md):
 - **A provider is only in rotation if it passes the eval** (8 tool-loop tasks judged on workspace outcomes).
 - **One browser, many tabs**: Chromium locks a profile directory, so every `shared` provider is a tab of one browser; a provider failure closes its tab, never the browser.
 - **Failover only before output**: once text has streamed to the client, switching provider would corrupt the turn.
+- **dsh's context window is set huge on purpose**: `data/dsh.patch.yml` declares `contextWindow: &context_window 1000000` tokens (one constant, per-model overridable) so dsh's own compaction (a model-written summary of older history, `dsh-compaction-basic`) and tool-result pruner do not start early and make the model forget files it read. Measured with the real dsh (`tests/test_dsh_context_window.py`): at 80,000 dsh condensed and the file text left later requests; at 1,000,000 it never does. Real limits come from the site's own signals in the shim (`full_markers`, length errors, `limits.json`), and a `context_length_exceeded` reply still makes dsh condense once and retry.
+- **One chat per task, limits learned not assumed**: the shim continues one site chat per task for every provider and sends only new messages (docs/MEMORY.md); `limits.py` records what each site actually accepted.
 - **Cookies**: plain Chrome (for Google sign-in) and headless Playwright must use the same cookie-encryption mode (`--password-store=basic` on Linux, `--use-mock-keychain` on macOS) or Chrome deletes the cookies it cannot decrypt.
 
 Modules: `client/` (rpc, renderer, REPL), `backends/` (providers, bridge Session, shim), `eval/`, plus `setup_cmd`, `login_cmd`, `doctor`, `auth`, `paths`, `logs`.

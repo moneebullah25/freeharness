@@ -31,7 +31,7 @@ import re
 from dataclasses import dataclass
 from string import Template
 
-from . import oss_cmd, paths, sessions
+from . import loopguard, oss_cmd, paths, sessions
 from .client import rpc
 from .eval import oss_judge as oj
 from .eval import oss_stage as st
@@ -168,7 +168,8 @@ class Flow:
     """One execution of the stage list over a Runtime. `state` is the checkpoint; everything else is recomputed."""
 
     def __init__(self, rd: oj.RunDir, state: dict, rt, rec: oss_cmd.Recorder, models: list[str], max_steps: int,
-                 turn_timeout: float, repair: int | None, say, info: dict):
+                 turn_timeout: float, repair: int | None, say, info: dict, loop_guard: bool = False):
+        self.loop_guard = loop_guard
         self.rd, self.state, self.rt, self.rec = rd, state, rt, rec
         self.models, self.max_steps, self.turn_timeout, self.repair = models, max_steps, turn_timeout, repair
         self.say, self.info = say, info
@@ -280,6 +281,8 @@ class Flow:
         prompt. Returns the TurnResult, or None when the run must stop (self.stop says why)."""
         rec_s = self.srec(stage)
         original, cur = prompt, prompt
+        guard = loopguard.enabled(self.loop_guard)         # OFF unless --loop-guard / FREEHARNESS_LOOP_GUARD=1
+        watch, loops = loopguard.Watch(), 0
         while True:
             left = (self.max_steps - self.steps) if self.max_steps else None
             if self.max_steps and left <= 0:
@@ -296,8 +299,10 @@ class Flow:
             oss_cmd.write_json(self.rd.run, self.info)
             self.checkpoint()
             err = ""
+            watch.reset()
             try:
-                res = self.rt.run_turn(self.sid, cur, on_event=self.rec.event, timeout=self.turn_timeout, max_steps=budget)
+                res = self.rt.run_turn(self.sid, cur, on_event=self.rec.event, timeout=self.turn_timeout, max_steps=budget,
+                                       **({"stop_when": watch.feed} if guard else {}))
             except (rpc.RuntimeDied, TimeoutError, rpc.RpcError) as e:
                 err = str(e)[:300] or type(e).__name__
                 self.note(f"{stage.id}: turn failed on {model}: {err}")
@@ -325,6 +330,17 @@ class Flow:
                 self.stage_log(stage, {"event": "turn", "kind": kind, "model": model, "prompt": cur, "texts": texts,
                                        "steps": res.steps, "reason": res.reason, "ok": res.ok})
                 self.checkpoint()
+                if res.reason.get("kind") == "loop_guard":
+                    # The same call returned the same output again and again. End the turn and say so: the repair
+                    # turn quotes the call and its output and asks for the next DIFFERENT action (never names one).
+                    rep = {k: v for k, v in res.reason.items() if k != "kind"}
+                    self.note(f"{stage.id}: loop guard: {loopguard.describe(rep)}")
+                    self.stage_log(stage, {"event": "loop_guard", "call": rep["name"], "count": rep["count"]})
+                    if loops < 2:
+                        loops += 1
+                        cur = loopguard.repair_text(rep) + f"\nStage {stage.id} state:\n{self.summary()}"
+                        continue
+                    return res                       # the same loop again after two repair turns: the acceptance check decides
                 if res.ok or res.reason.get("kind") == "max_steps":
                     if not res.ok:
                         self.note(f"{stage.id}: the step budget of this turn ended; the harness checks what was done")

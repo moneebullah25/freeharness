@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import paths
+from .limits import NO_LIMIT
 
 
 @dataclass(frozen=True)
@@ -42,10 +43,17 @@ class Provider:
     verified: bool = False          # answered a real prompt, logged out
     reply_timeout: int = 90         # seconds for the answer to START (ChatGPT's measured TTFT: ~8-45s)
     answer_timeout: int = 100       # seconds for it to FINISH once started
-    max_prompt: int = 60_000        # chars the site takes in one message (a guess
-                                    # until measured; too high => site error, and
-                                    # the shim reports context_length_exceeded)
+    max_prompt: int = NO_LIMIT      # chars the site takes in one message. NO assumed limit by default (a
+                                    # safety value): real limits are learned from the site's own
+                                    # signals (backends/limits.py), never guessed. Set only from a
+                                    # measurement that has been repeated.
     errors: tuple = ()              # extra lowercase markers of a site-rendered failure
+    full_markers: tuple = ()        # lowercase substrings of the SITE's own "this chat is full / too long"
+                                    # notice (page or reply). Seen => the shim stops continuing that chat
+                                    # and starts a new one with a compact history. Wording is from memory
+                                    # of each site and UNVERIFIED until seen live (docs/PROVIDERS.md).
+    size_errors: tuple = ()         # generic-looking site errors known to mean "prompt too big" for this
+                                    # site (a measured one); treated like a length signal
     consent: tuple = ()             # buttons to click away after load (best effort)
     challenge_url: tuple = ()       # URL fragments of the site's human-verification page; seeing one
                                     # means "stop and cool down", never "keep waiting"
@@ -73,9 +81,10 @@ CHATGPT = Provider(
     headless_ok=False,          # Cloudflare challenges headless even when logged in (2026-10-25): a visible window
     channel="chrome",           # its own profile (profiles/chatgpt), signed in with `freeharness login chatgpt`
     verified=True,
-    max_prompt=100_000,
     errors=("something went wrong", "you've reached our limit", "too many requests",
             "please try again later", "unusual activity", "conversation is too long"),
+    full_markers=("maximum length for this conversation", "conversation is too long",
+                  "start a new chat", "message you submitted was too long", "message is too long"),
     # RE-MEASURED 2026-10-25 (the page was rebuilt; the old ids/testids are gone, kept as fallbacks):
     # the composer is a ProseMirror editor, Send/Stop are labeled buttons, and a reply is
     # `[data-markdown-text-style=assistant-message]` (a user bubble has data-user-message-bubble).
@@ -107,11 +116,14 @@ GEMINI = Provider(
     # stop button was present, i.e. Gemini was thinking, not failing. Steps take
     # 15-60s normally, so give it room instead of cooling the provider for being slow.
     reply_timeout=240, answer_timeout=240,
-    # MEASURED (OSS run, 2026-10-25): a 58k-char prompt got "I encountered an error doing what you
-    # asked" while steps of 8-12k chars were fine. Trim (shim.fit_messages) well before that.
-    max_prompt=30_000,
+    # MEASURED (OSS run, 2026-10-25): ONE 58k-char prompt got "I encountered an error doing what you
+    # asked" while steps of 8-12k chars were fine. A single observation, so it is NOT a ceiling: it is
+    # only registered as a size-looking error, and the learned limit (limits.py) needs a repeat.
     errors=("something went wrong", "you've reached your limit", "try again later",
             "can't help with that", "i can't help", "i encountered an error doing what you asked"),
+    size_errors=("i encountered an error doing what you asked",),
+    full_markers=("conversation is too long", "start a new chat", "start a new conversation",
+                  "too long for me to"),
     # `model-response` also holds UI chrome ("Show code", "Gemini said", "Processed
     # and analyzed in code"); its `message-content` child is just the answer.
     sel={
@@ -136,6 +148,8 @@ PERPLEXITY = Provider(
     # "Sign up and repeat your request." -- that is the anonymous quota, not an answer.
     errors=("something went wrong", "rate limit", "try again later",
             "sign up and repeat", "sign in to continue"),
+    full_markers=("thread is too long", "conversation is too long", "start a new thread",
+                  "start a new chat"),
     sel={
         "input": ["div#ask-input[contenteditable='true']",
                   "div[contenteditable='true'][role='textbox']"],
@@ -161,6 +175,7 @@ QWEN = Provider(
     reply_timeout=420, answer_timeout=420,
     errors=("something went wrong", "too many requests", "rate limit", "try again later",
             "daily usage limit", "reached the limit"),
+    full_markers=("too long", "new chat", "context length", "exceeds the maximum"),
     sel={
         "input": ["textarea.message-input-textarea"],
         "send": ["button.send-button"],
@@ -181,6 +196,8 @@ GROK = Provider(
     consent=("button:has-text('Reject All')",),
     errors=("something went wrong", "rate limit", "too many requests", "try again later",
             "limit reached", "usage limit", "upgrade to continue"),
+    full_markers=("conversation is too long", "start a new conversation", "start a new chat",
+                  "context length", "maximum length"),
     sel={
         "input": ["div.tiptap.ProseMirror[contenteditable='true']"],
         "send": ["[data-testid='chat-submit']"],
@@ -192,8 +209,10 @@ GROK = Provider(
 
 # Passed the tool-use eval: the default rotation, in order (docs/PROVIDERS.md).
 ELIGIBLE = ("gemini", "qwen")
-# Providers whose "continue one chat per task" mode passed the eval (Gemini: 8/8, 28 steps in 388 s vs
-# 8/8, 33 steps in 532 s with a fresh chat per step, 2026-10-25). Others stay opt-in until they do.
+# "Continue one chat per task" mode. STICKY_VERIFIED = providers where it was MEASURED live (Gemini: 8/8, 28
+# steps in 388 s vs 8/8, 33 steps in 532 s with a fresh chat per step, 2026-10-25). It no longer gates the
+# default: sticky is ON for every provider (`--sticky auto` = all; `--sticky none` turns it off), so a provider
+# outside this tuple is default-on but NOT live-verified, and ends the chat only on the site's own signals.
 STICKY_VERIFIED = ("gemini",)
 # Everything registered, eligible first. The rest failed the eval or cannot run headless:
 # Grok and Perplexity answer without using tools (0/8), so a turn that lands on them can
@@ -223,6 +242,8 @@ DEEPSEEK = Provider(
     reply_timeout=120, answer_timeout=180,
     errors=("server is busy", "too many requests", "rate limit", "try again later",
             "something went wrong", "message limit"),
+    full_markers=("length limit", "conversation is too long", "start a new chat",
+                  "conversation limit"),
     sel={
         "input": ["textarea"],
         "send": [".ds-button--primary.ds-button--circle:not(.ds-button--disabled)"],

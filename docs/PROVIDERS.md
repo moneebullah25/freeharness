@@ -48,9 +48,35 @@ window with their own profile**, because Chromium locks a profile to one browser
 never bypassed and the browser is not disguised: a normal visible Chrome simply is not blocked. HuggingChat and Duck.ai have no provider entry (free quota used up / CAPTCHA).
 
 ## Sticky chats
-`STICKY_VERIFIED` in `providers.py` lists providers whose one-chat-per-task mode passed the eval: Gemini 8/8 in 388 s over 28 steps (vs 8/8 in
-532 s over 33 steps with a fresh chat per step; single runs, 2026-10-25). Qwen, Grok, ChatGPT and DeepSeek run with a fresh chat per step
-until they pass the same comparison (`freeharness eval --model <name> --sticky`).
+Sticky (one chat per task, only new messages sent) is **on for every provider by default**; `--sticky none` / `FREEHARNESS_STICKY=none` turns it off.
+`STICKY_VERIFIED` in `providers.py` now means only "measured live": **Gemini** 8/8 in 388 s over 28 steps (vs 8/8 in 532 s over 33 steps with a
+fresh chat per step; single runs, 2026-10-25). For Qwen, DeepSeek, ChatGPT, Grok and Perplexity sticky is **default-on but NOT live-verified**:
+nobody has yet run a multi-step task on them in one chat and read the logs. The lead verifies each live (`SHIM_DEBUG_PROMPTS=<file>` shows what
+the site received; `freeharness eval --model <name> --sticky` compares).
+
+### "Chat is full" markers (`Provider.full_markers`) - UNVERIFIED until seen live
+Lowercase substrings of the site's own notice, checked in a short reply (<= 1,500 chars, no tool-call block), in alert/banner/last-reply text on
+the page (`Session.chat_full`) and in the error of a failed ask. Seen => the chat is not continued; the same request is re-sent in a NEW chat
+with a compact history. The wording below is from memory of each site, not captured; an entry is only trustworthy once a log shows the real notice.
+
+| Provider | `full_markers` |
+|---|---|
+| ChatGPT | `maximum length for this conversation`, `conversation is too long`, `start a new chat`, `message you submitted was too long`, `message is too long` |
+| DeepSeek | `length limit`, `conversation is too long`, `start a new chat`, `conversation limit` |
+| Gemini | `conversation is too long`, `start a new chat`, `start a new conversation`, `too long for me to` |
+| Qwen | `too long`, `new chat`, `context length`, `exceeds the maximum` (broad on purpose; only applied to short replies) |
+| Grok | `conversation is too long`, `start a new conversation`, `start a new chat`, `context length`, `maximum length` |
+| Perplexity | `thread is too long`, `conversation is too long`, `start a new thread`, `start a new chat` |
+
+Gemini also has `size_errors` = `i encountered an error doing what you asked` (one 58k-char prompt got it on 2026-10-25 while 8-12k steps were fine:
+a single observation, so it only counts as a length-looking failure, never as a limit by itself).
+
+### Prompt-size limits
+No provider has an assumed `max_prompt` any more (safety value 2,000,000 chars). A failed FRESH chat with a length-looking signal at a size above
+anything that worked records `suspect_max_chars` in `<state>/limits.json`; a smaller success afterwards confirms it (ceiling = 80% of the failing
+size, fresh-chat prompts aim at 50% of the ceiling). Visible in `/health` and `freeharness doctor`. Until a site has actually failed, nothing is
+trimmed for it. The old guesses (Gemini 30,000 "measured", ChatGPT 100,000, default 60,000) are gone: the 60,000 default is what trimmed every
+DeepSeek prompt and made the model lose files it had read.
 
 ## Failover evidence
 With Gemini forced to fail with a quota error, the router put it on a 900 s cooldown and the same request was answered by a live Qwen
