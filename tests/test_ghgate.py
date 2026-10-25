@@ -874,3 +874,9 @@ def test_cli_dispatches_github_and_doctor_has_a_line(tmp_path, monkeypatch, caps
     assert "github" in cli.SUBCOMMANDS
     assert cli.main(["github", "status"]) == 0 and "not enabled" in capsys.readouterr().out
     assert any(name == "github gate" for _, name, _ in doctor.checks())
+
+
+def test_gh_search_takes_repo_from_the_query_when_the_argument_is_missing(tmp_path):
+    import re
+    src = (Path(__file__).resolve().parents[1] / "src/freeharness/mcp/ghgate.py").read_text()
+    assert 'repo is required (owner/name)' in src and re.search(r'"gh_search".*\["query"\]\)', src)

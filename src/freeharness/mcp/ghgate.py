@@ -545,7 +545,12 @@ class Gate:
             lines += ["--- CONTRIBUTING (first 4000 chars) ---", com["text"][:4000]]
         return "\n".join(lines)
 
-    def gh_search(self, repo: str, query: str, kind: str = "issues") -> str:
+    def gh_search(self, repo: str = "", query: str = "", kind: str = "issues") -> str:
+        if not repo:                      # GitHub's own syntax puts it in the query: "repo:owner/name words"
+            m = re.search(r"(?i)(?:^|\s)repo:([\w.-]+/[\w.-]+)", _text(query, "query"))
+            if not m:
+                raise Refuse("repo is required (owner/name), e.g. repo=\"piccolo-orm/piccolo\"")
+            repo = m.group(1)
         repo = self._repo(repo)
         if kind not in ("issues", "prs"):
             raise Refuse("kind must be issues or prs")
@@ -1001,7 +1006,7 @@ def _tool(name, desc, props, required):
 S, INT = "string", "integer"
 TOOLS = [
     _tool("gh_repo_info", "Repo rules: issues on?, default branch, PR policy, CONTRIBUTING (CLA/approval flags).", {"repo": S}, ["repo"]),
-    _tool("gh_search", "Search open+closed issues or prs in a repo (logged as evidence).", {"repo": S, "query": S, "kind": S}, ["repo", "query"]),
+    _tool("gh_search", "Search open+closed issues or prs in a repo (logged as evidence).", {"repo": S, "query": S, "kind": S}, ["query"]),
     _tool("gh_get_file", "Read a file or folder from a repo (optional ref).", {"repo": S, "path": S, "ref": S}, ["repo", "path"]),
     _tool("gh_list_pr_files", "Files changed in a PR.", {"repo": S, "number": INT}, ["repo", "number"]),
     _tool("gh_pr_threads", "Review threads on a PR.", {"repo": S, "number": INT}, ["repo", "number"]),
