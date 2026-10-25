@@ -114,5 +114,11 @@ def main(argv=None) -> int:
     except (RuntimeError, OSError) as e:
         print(f"setup failed: {e}", file=sys.stderr)
         return 1
+    try:
+        from . import memory_cmd
+        memory_cmd.enable()
+        print("memory + session scratchpad enabled (`freeharness memory disable` to turn off)")
+    except OSError as e:
+        print(f"could not enable memory: {e}", file=sys.stderr)
     print("done. Next: `freeharness login` (once), then `freeharness doctor`.")
     return 0

@@ -5,9 +5,10 @@ backends (chatgpt-bridge/shim.py).
     freeharness                      # interactive, in the current directory
     freeharness -p "fix the failing test"      # one turn, then exit
     freeharness --resume term-20261024-211500  # continue a saved session
+    freeharness --continue                     # continue the latest session for this folder
     freeharness --model gemini --providers gemini,perplexity
 
-Inside: /help /model /providers /new /resume /sessions /status /quit.
+Inside: /help /model /providers /new /resume /sessions /remember /scratch /status /quit.
 Ctrl-C while a turn runs abandons it (restarts the runtime and resumes the
 session: the protocol has no cancel). The model may keep generating in the
 background browser for a few seconds, and the next request waits for it.
@@ -21,7 +22,7 @@ import time
 from rich.console import Console
 from rich.rule import Rule
 
-from .. import paths
+from .. import memory, memory_cmd, paths, sessions
 from ..transcript import Transcript
 from .render import Renderer, turn_outcome
 from .rpc import (DSH_HOME, Runtime, RuntimeDied, RpcError, ensure_shim,
@@ -34,6 +35,8 @@ HELP = """\
 [bold]/providers[/]          which web chat sites are ready or cooling down
 [bold]/new[/]                start a fresh session (empty context)
 [bold]/sessions[/]           saved sessions            [bold]/resume[/] [dim]<id>[/]  continue one
+[bold]/remember[/] [dim]<text>[/]  save a convention or fact to long-term memory
+[bold]/scratch[/]            this session's scratchpad (task, ready for testing, next steps)
 [bold]/status[/]             session, model, workspace
 [bold]/quit[/]               leave (also Ctrl-D)
 Ctrl-C during a turn abandons it."""
@@ -54,11 +57,29 @@ class App:
     def __init__(self, args, console: Console):
         self.args, self.c = args, console
         self.rt = Runtime(args.cwd, model=args.model)
-        self.sid = args.resume or new_session_id()
+        self.sid = args.resume or self.continue_id() or new_session_id()
         self.shim_proc = None
-        self.resumed = bool(args.resume)
+        self.resumed = bool(args.resume) or self._continued
+        self.preamble = ""
         self.has_history = self.resumed
         self.tr: Transcript | None = None
+
+    def continue_id(self) -> str | None:
+        self._continued = False
+        if getattr(self.args, "cont", False):
+            sid = sessions.latest_for_cwd(self.rt.cwd, set(saved_sessions()))
+            if sid:
+                self._continued = True
+                return sid
+        return None
+
+    def load_scratch(self) -> str:
+        """The scratchpad as a note for the model (sent once, with the next prompt)."""
+        try:
+            pad = sessions.render_scratch(self.sid)
+        except ValueError:
+            return ""
+        return ("[Your scratchpad from earlier in this session, restored after a restart:\n" + pad + "]\n\n") if pad else ""
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -66,10 +87,21 @@ class App:
         if not self.args.no_shim:
             with self.c.status("starting the model shim…"):
                 self.shim_proc = ensure_shim(self.args.providers, sticky=self.args.sticky)
+        try:
+            memory_cmd.refresh(self.rt.cwd)         # pinned conventions for this folder -> AGENTS.md
+            sessions.touch(self.sid, self.rt.cwd, self.rt.model)
+            sessions.set_active(self.rt.cwd, self.sid)
+        except (OSError, ValueError) as e:
+            self.c.print(f"[yellow]memory/session index unavailable:[/] {e}")
         with self.c.status("starting dsh…"):
             self.rt.start()
             if self.resumed:
                 self.rt.resume(self.sid)
+        if self.resumed:
+            self.preamble = self.load_scratch()
+        pad = sessions.render_scratch(self.sid) if self.resumed else ""
+        if pad:
+            self.c.print(f"[dim]scratchpad:[/]\n{pad}")
 
     def stop(self):
         if self.tr:
@@ -91,6 +123,7 @@ class App:
                 self.tr.close()
             self.tr = Transcript(self.sid, self.rt.cwd)
         self.tr.user(text)
+        send, self.preamble = self.preamble + text, ""
         label = {"text": "waiting for the model…"}
         started = time.monotonic()
         with self.c.status(label["text"]) as status:
@@ -104,7 +137,7 @@ class App:
                 status.update(f"{label['text']}  [dim]{elapsed:.0f}s[/]")
 
             try:
-                result = self.rt.run_turn(self.sid, text, on_event=on_event, on_tick=on_tick,
+                result = self.rt.run_turn(self.sid, send, on_event=on_event, on_tick=on_tick,
                                           timeout=self.args.turn_timeout, max_steps=self.args.max_steps)
             except KeyboardInterrupt:
                 status.stop()
@@ -116,6 +149,12 @@ class App:
                 self.c.print(f"[red]runtime problem:[/] {e}")
                 self.recover()
                 return False
+        try:
+            entry = sessions.get(self.sid) or {}
+            sessions.record_turn(self.sid, self.rt.cwd, "" if entry.get("title") else text, self.rt.model)
+            sessions.set_active(self.rt.cwd, self.sid)
+        except (OSError, ValueError):
+            pass
         ok, why = turn_outcome(result.reason)
         health = shim_health() if not self.args.no_shim else None
         note = (f"{result.steps} step(s) · {len(result.tool_calls)} tool call(s) · "
@@ -166,11 +205,30 @@ class App:
                 state = "[green]ready[/]" if v["ready"] else f"[yellow]cooling {v['cooldown_s']}s[/] {v['reason']}"
                 self.c.print(f"  {k:11} {state}")
         elif cmd == "new":
-            self.sid, self.has_history = new_session_id(), False
+            self.sid, self.has_history, self.preamble = new_session_id(), False, ""
+            sessions.set_active(self.rt.cwd, self.sid)
             self.c.print(f"new session [bold]{self.sid}[/]")
         elif cmd == "sessions":
-            for s in saved_sessions()[:15] or ["(none yet)"]:
-                self.c.print(f"  {s}")
+            items = sessions.list_sessions(None if arg == "all" else self.rt.cwd, 15)
+            for line in sessions.format_list(items) or ["(none yet; /sessions all shows every folder)"]:
+                self.c.print(f"  {line}", markup=False)
+        elif cmd == "remember":
+            if not arg:
+                self.c.print("[red]usage:[/] /remember <text>")
+            else:
+                store = memory.MemoryStore()
+                try:
+                    f = store.save(arg, "feedback", "global", self.rt.cwd, session=self.sid)
+                except ValueError as e:
+                    self.c.print(str(e), markup=False)
+                    return True
+                finally:
+                    store.close()
+                memory_cmd.refresh(self.rt.cwd)
+                self.c.print(f"{f['action']}: {memory.format_fact(f)}", markup=False, highlight=False)
+                self.c.print("[dim]pinned in AGENTS.md from the next session; the agent can recall it now[/]")
+        elif cmd == "scratch":
+            self.c.print(sessions.render_scratch(self.sid) or "(scratchpad is empty)", markup=False)
         elif cmd == "resume":
             if not arg:
                 self.c.print("[red]usage:[/] /resume <session id>")
@@ -178,6 +236,9 @@ class App:
                 try:
                     self.rt.resume(arg)
                     self.sid, self.has_history = arg, True
+                    sessions.touch(arg, self.rt.cwd, self.rt.model)
+                    sessions.set_active(self.rt.cwd, arg)
+                    self.preamble = self.load_scratch()
                     self.c.print(f"resumed [bold]{arg}[/]")
                 except RpcError as e:
                     self.c.print(f"[red]{e}[/]")
@@ -228,6 +289,8 @@ def main(argv=None) -> int:
                     help="abandon a turn that runs longer than S seconds (default: %(default)s)")
     ap.add_argument("--no-shim", action="store_true", help="do not start or check the shim")
     ap.add_argument("--resume", metavar="ID", help="resume a saved session")
+    ap.add_argument("--continue", dest="cont", action="store_true",
+                    help="resume the latest session for this folder (starts a new one if there is none)")
     args = ap.parse_args(argv)
 
     console = Console()

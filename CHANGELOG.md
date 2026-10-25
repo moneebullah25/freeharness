@@ -7,6 +7,15 @@ releases may include breaking changes; they will be listed under **Changed**.
 
 ## [Unreleased]
 
+### Added
+- Session index (`sessions.py`): `freeharness --continue` resumes the latest session for the current folder, `freeharness sessions`
+  and `/sessions` list title and age, per-session scratchpad shown and re-injected after resume.
+- Long-term memory: typed facts (user | feedback | project | reference, global or per folder) in a local sqlite file with
+  FTS5/BM25 search, dedupe-by-update, secret refusal, `freeharness memory list|add|search|forget|extract|export|wipe|enable|disable`,
+  `/remember`, and the stdio MCP server `freeharness.mcp.memory` (memory_save, memory_recall, memory_forget, scratch_get,
+  scratch_set), enabled by `freeharness setup`. Pinned conventions are rendered into the managed AGENTS.md block before each run.
+- docs/SESSIONS_AND_MEMORY.md; memory section in docs/PRIVACY.md.
+
 ## [0.1.0] - 2026-10-25
 
 First release.

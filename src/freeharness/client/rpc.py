@@ -156,6 +156,7 @@ class Runtime:
         # dsh reads its sandbox mode from this variable; an inherited
         # DSH_PERMISSION_MODE=danger-full-access must not silently widen the trust model.
         env["DSH_PERMISSION_MODE"] = "workspace-write"
+        env["FREEHARNESS_CWD"] = self.cwd                 # the memory MCP server scopes project facts by it
         env["PATH"] = find_node_dir() + os.pathsep + env.get("PATH", "")
         cmd = [str(DSH_BIN), "--profile", "sdk", "--patch", str(self.patch)]
         for extra in (self.overlays() if self.overlay_files is None else self.overlay_files):                     # user MCP servers etc.: <config>/overlay.d/*.yml
