@@ -37,6 +37,7 @@ cd ~/my-project
 freeharness                          # interactive; the agent works in this directory
 freeharness -p "fix the failing test and run the suite"
 freeharness --model gemini           # pin one site;  default rotation is gemini,qwen
+freeharness --providers all          # every site that can run headless (see the warning below)
 ```
 In the session: `/help` `/model` `/providers` `/new` `/sessions` `/resume <id>` `/status` `/quit`.
 **Ctrl-C** abandons the current turn (the harness has no cancel call, so the runtime is restarted and the
@@ -47,7 +48,9 @@ Run it in a **project directory**, not your home directory: the agent can read a
 ## Providers
 A site joins the rotation only if it passes the tool-use eval (`freeharness eval --model <name>`): 8 coding tasks
 judged on the resulting files, never on what the model says. **Today Gemini (8/8) and Qwen (8/8) are eligible and make up the default rotation**; Perplexity and Grok failed (0/8). Qwen needs
-`freeharness login qwen` once; without it the shim simply falls back to Gemini. Evidence: [docs/PROVIDERS.md](docs/PROVIDERS.md).
+`freeharness login qwen` once; without it the shim simply falls back to Gemini. `--providers all` adds Grok and Perplexity at the end of the rotation; they only get a turn when the eligible sites are resting,
+and because they tend to answer without using tools, such a turn can "finish" without changing anything. ChatGPT cannot run headless
+(Cloudflare check), so `all` includes it only with a visible window. Evidence: [docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ## Other commands
 `freeharness setup | login [site…] [--check] | doctor [--report] | serve | eval | version`

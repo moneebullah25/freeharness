@@ -158,6 +158,22 @@ def test_truncated_first_copy_does_not_hide_the_whole_one():
     print("  truncated copy first .. ok")
 
 
+def test_provider_spec_all_and_unknown():
+    from freeharness.backends import providers
+    assert providers.resolve("gemini, qwen") == ["gemini", "qwen"]
+    allk = providers.resolve("all")
+    assert allk[:2] == ["gemini", "qwen"], "eligible providers must come first"
+    assert "chatgpt" not in allk, "a headless run must never open a visible window for ChatGPT"
+    assert set(allk) == {"gemini", "qwen", "grok", "perplexity"}
+    assert providers.resolve("ALL", headed=True)[-1] == "chatgpt"
+    try:
+        providers.resolve("gemini,nope")
+        raise AssertionError("unknown provider accepted")
+    except ValueError as e:
+        assert "nope" in str(e)
+    print("  providers=all ....... ok")
+
+
 def test_json_about_something_else_is_not_a_tool_call():
     """A model explaining some JSON must not trigger a tool."""
     text = 'An example record is {"name": "Alice", "arguments": {"x": 1}} as you see.'

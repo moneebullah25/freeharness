@@ -16,6 +16,14 @@ headless, on a free account.
 | HuggingChat | free account | not evaluated: free message quota already exhausted ("Upgrade Required") | Excluded |
 | Kimi, Z.ai, DeepSeek chat, Claude, Mistral, LMArena, You.com, DeepAI, Blackbox, Phind, Pi | n/a | not usable without payment, a CAPTCHA, or are blocked headless (2026-10-24) | Not registered |
 
+## Using more than the eligible set
+`freeharness --providers all` (or `freeharness serve --providers all`) puts every registered site that can run into the rotation,
+eligible ones first: Gemini, Qwen, then Grok and Perplexity. The shim prints a warning for the ones that failed the eval. The cost is
+real: when Gemini and Qwen are both resting, a turn that lands on Grok or Perplexity often replies "done" without calling a tool, so the
+agent can report success with nothing changed. Waiting for an eligible site (HTTP 429 + Retry-After) is the safer default.
+ChatGPT is excluded from `all` unless the shim runs headed, because Cloudflare challenges headless Chrome even when logged in
+(tested 2026-10-25) and the challenge is never bypassed. HuggingChat and Duck.ai have no provider entry (free quota used up / CAPTCHA).
+
 ## Failover evidence
 With Gemini forced to fail with a quota error, the router put it on a 900 s cooldown and the same request was answered by a live Qwen
 session (2026-10-25; the router logic is also unit-tested). Rotation order is the `--providers` order: Gemini first (no login needed),

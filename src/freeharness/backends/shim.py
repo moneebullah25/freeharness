@@ -42,7 +42,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from .. import auth, paths
-from .providers import PROVIDERS, Provider
+from .providers import ELIGIBLE, PROVIDERS, Provider, resolve
 
 MAX_BODY = 8_000_000
 
@@ -769,13 +769,21 @@ def main():
         # Only providers that pass the tool-use eval belong here (docs/PROVIDERS.md): a
         # fallback that confidently refuses to use tools is worse than no fallback.
         sp.add_argument("--providers", default="gemini,qwen",
-                        help="comma-separated, in rotation order (default: %(default)s)")
+                        help="comma-separated in rotation order, or 'all' (every registered site that can run, "
+                             "including ones that failed the eval). Default: %(default)s")
         sp.add_argument("--headed", action="store_true", help="show the browser windows")
         if name == "serve":
             sp.add_argument("--host", default="127.0.0.1")
             sp.add_argument("--port", type=int, default=8766)
     args = ap.parse_args()
-    keys = [k.strip() for k in args.providers.split(",") if k.strip()]
+    try:
+        keys = resolve(args.providers, args.headed)
+    except ValueError as e:
+        sys.exit(str(e))
+    risky = [k for k in keys if k not in ELIGIBLE]
+    if risky:
+        print(f"warning: {risky} have not passed the tool-use eval; a turn that lands on one may "
+              f"answer without using tools. See docs/PROVIDERS.md.", file=sys.stderr)
     bad = [k for k in keys if k not in PROVIDERS]
     if bad:
         sys.exit(f"unknown provider(s) {bad}; choose from {sorted(PROVIDERS)}")

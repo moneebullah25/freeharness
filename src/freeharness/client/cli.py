@@ -208,7 +208,7 @@ def main(argv=None) -> int:
     ap.add_argument("--cwd", default=".", help="workspace (default: current directory)")
     ap.add_argument("--model", default="auto", choices=MODELS)
     ap.add_argument("--providers", default="gemini,qwen",
-                    help="providers for a shim this client starts (default: %(default)s)")
+                    help="providers for a shim this client starts: comma-separated, or 'all' (default: %(default)s)")
     ap.add_argument("--no-shim", action="store_true", help="do not start or check the shim")
     ap.add_argument("--resume", metavar="ID", help="resume a saved session")
     args = ap.parse_args(argv)

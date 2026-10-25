@@ -180,5 +180,25 @@ GROK = Provider(
     },
 )
 
+# Passed the tool-use eval: the default rotation, in order (docs/PROVIDERS.md).
+ELIGIBLE = ("gemini", "qwen")
+# Everything registered, eligible first. The rest failed the eval or cannot run headless:
+# Grok and Perplexity answer without using tools (0/8), so a turn that lands on them can
+# "finish" having changed nothing; ChatGPT is behind a Cloudflare check and needs a window.
+EVERYTHING = ("gemini", "qwen", "grok", "perplexity", "chatgpt")
+
+
+def resolve(spec: str, headed: bool = False) -> list[str]:
+    """`--providers` value -> provider keys. "all" means every registered site that can run
+    in the current mode (no visible window unless `headed`), eligible ones first."""
+    if spec.strip().lower() == "all":
+        return [k for k in EVERYTHING if PROVIDERS[k].headless_ok or headed]
+    keys = [k.strip() for k in spec.split(",") if k.strip()]
+    unknown = [k for k in keys if k not in PROVIDERS]
+    if unknown:
+        raise ValueError(f"unknown provider(s) {unknown}; choose from {sorted(PROVIDERS)} or 'all'")
+    return keys
+
+
 PROVIDERS: dict[str, Provider] = {p.key: p for p in (CHATGPT, GEMINI, PERPLEXITY, QWEN, GROK)}
 

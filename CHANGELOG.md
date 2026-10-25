@@ -23,6 +23,8 @@ First release.
 - Shim access control: per-install bearer token (0600) and loopback-only Host check.
 - Tool-use eval suite (8 tasks) that gates providers on workspace outcomes, not model claims.
 
+- `--providers all` to rotate over every registered site that can run, eligible first, with a warning for those that failed the eval.
+
 ### Security
 - Browser profiles, token, and logs live in per-user directories with owner-only permissions.
 - `npm ci --ignore-scripts`; Node tarball verified against nodejs.org SHASUMS256.
