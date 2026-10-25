@@ -181,6 +181,41 @@ def render_prompt(messages: list[dict], tools: list[dict] | None) -> str:
     return "\n\n".join(parts)
 
 
+OMITTED = "[older output omitted to fit the provider's prompt limit]"
+DROPPED = "[earlier conversation omitted to fit the provider's prompt limit]"
+
+
+def fit_messages(messages: list[dict], tools: list[dict] | None, budget: int) -> list[dict]:
+    """Shrink an over-long history so render_prompt() fits `budget` chars.
+
+    Never touches system/developer messages or the latest user message. Order: (1) replace tool
+    result bodies with a marker, oldest first, newest last; (2) drop the oldest whole messages
+    before the latest user message (one marker is left behind). Returns `messages` unchanged
+    when it already fits; may still be too large (the router then raises PromptTooLarge)."""
+    def size(ms):
+        return len(render_prompt(ms, tools))
+    if size(messages) <= budget:
+        return messages
+    ms = [dict(m) for m in messages]
+    last_user = max((i for i, m in enumerate(ms) if m.get("role") == "user"), default=-1)
+    for i, m in enumerate(ms):
+        if m.get("role") == "tool" and _text(m.get("content")) != OMITTED:
+            m["content"] = OMITTED
+            if size(ms) <= budget:
+                return ms
+    if last_user > 0:
+        keep = [m for m in ms[:last_user] if m.get("role") in ("system", "developer")]
+        rest = [m for m in ms[:last_user] if m.get("role") not in ("system", "developer")]
+        tail = ms[last_user:]
+        while rest:
+            rest.pop(0)
+            cand = keep + [{"role": "user", "content": DROPPED}] + rest + tail
+            if size(cand) <= budget:
+                return cand
+        return keep + [{"role": "user", "content": DROPPED}] + tail
+    return ms
+
+
 # ------------------------------------------------------- sticky threads (see Router)
 
 STICKY_MAX_STEPS = 20          # a chat that has taken this many requests is replaced by a fresh one
@@ -710,6 +745,11 @@ class Handler(BaseHTTPRequestHandler):
             self._reply(model, stream, want_usage, local_title(messages), [], 0, "title")
             return
 
+        try:
+            budget = max(PROVIDERS[k].max_prompt for k in self.router.candidates(model))
+            messages = fit_messages(messages, tools, budget)
+        except KeyError:
+            pass                       # unknown model: reported below
         prompt = render_prompt(messages, tools)
         try:
             events = stream_from_worker(

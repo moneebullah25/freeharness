@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 LOG = Path(os.environ.get("FAKE_OPENAI_LOG", tempfile.gettempdir())) / "freeharness-fake-requests.jsonl"
-PORT = 8766
+PORT = int(os.environ.get("FAKE_OPENAI_PORT", "8766"))
 
 
 class H(BaseHTTPRequestHandler):

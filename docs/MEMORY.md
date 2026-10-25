@@ -74,6 +74,19 @@ Every prompt, reply, tool call and result is also written, as it happens, to a r
 `freeharness transcript` lists them and `freeharness transcript <id>` prints one (`~/.local/share/freeharness/transcripts/`, owner-only,
 tool results capped at 20,000 characters). It is the file to open or paste into any chat by hand. It contains whatever the agent read.
 
+## Long sessions and prompt limits
+dsh condenses old history itself when its context fills (compaction, inside the harness). On top of that the shim now guards each
+provider's `max_prompt`: if the rendered prompt is too big it first replaces the oldest tool-result bodies with
+`[older output omitted to fit the provider's prompt limit]` (newest kept), then drops the oldest whole messages (one
+`[earlier conversation omitted ...]` marker). System/developer messages and the latest user message are never touched. Only if that
+still does not fit does the shim return `context_length_exceeded` (PromptTooLarge). **Unit-tested only** (`fit_messages`, and an HTTP
+test with a fake provider); it has not been exercised with the real dsh or a live site. Verified with the real dsh and `tests/fake_openai.py` (own port, temp DSH_HOME, no browser; `tests/test_context_e2e.py`, skipped if
+dsh/node is missing): the captured request contains project `AGENTS.md`, the global `dsh-home/AGENTS.md`, the skill name and
+description, the `skill` tool and `mcp__vault__vault_search`/`vault_read`; after `session/resume` in a fresh runtime the request replays
+the earlier user message before the new one; a transcript appended across a resume has one header and both turns in order (that part
+drives the `Transcript` class directly, not the CLI). NOT covered: the model actually calling a vault tool (the fake never does), dsh's
+own compaction, and the trimming against a live site.
+
 ## Where things are stored
 | What | Where (Linux) |
 |---|---|
