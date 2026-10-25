@@ -837,3 +837,15 @@ def test_a_second_name_key_is_the_argument_not_the_tool():
     _, calls = shim.parse_reply("```tool_call\n" + blk + "\n```", [blk], tools)
     assert [(c["function"]["name"], json.loads(c["function"]["arguments"])) for c in calls] == [
         ("mcp__gh__gh_branch", {"repo_dir": "piccolo", "name": "fix/1-x"})]
+
+
+def test_deepseek_dsml_markup_is_a_call():
+    one = ('<｜｜DSML｜｜ calls> <｜｜DSML｜｜ invoke name="bash"> <｜｜DSML｜｜ parameter name="arguments" string="false">'
+           '{"command": "ls -la"}</｜｜DSML｜｜ parameter> </｜｜DSML｜｜ invoke> </｜｜DSML｜｜ calls>')
+    _, calls = shim.parse_reply(one, [], TOOLS_S)
+    assert [(c["function"]["name"], json.loads(c["function"]["arguments"])) for c in calls] == [("bash", {"command": "ls -la"})]
+    split = '<｜DSML｜invoke name="bash"><｜DSML｜parameter name="command" string="true">echo hi</｜DSML｜parameter></｜DSML｜invoke>'
+    _, calls = shim.parse_reply(split, [], TOOLS_S)
+    assert [(c["function"]["name"], json.loads(c["function"]["arguments"])) for c in calls] == [("bash", {"command": "echo hi"})]
+    _, calls = shim.parse_reply(one.replace('name="bash"', 'name="nope"'), [], TOOLS_S)
+    assert calls == []

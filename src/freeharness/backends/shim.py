@@ -345,6 +345,45 @@ def _as_call(obj, names: dict):
     return (name, args) if isinstance(args, dict) else None
 
 
+_DSML_INVOKE = re.compile(r'invoke\s+name="([^"]+)"\s*>')
+_DSML_PARAM = re.compile(r'parameter\s+name="([^"]+)"(?:\s+string="(true|false)")?\s*>(.*?)(?=<[^<>]*DSML|\Z)', re.S)
+
+
+def _dsml_calls(text: str, names: dict):
+    """DeepSeek writes its OWN call markup when it ignores ours: `<｜DSML｜invoke name="bash">
+    <｜DSML｜parameter name="arguments" string="false">{json}</｜DSML｜parameter>...` (the bar and spacing vary
+    with how the page renders it). Returns [(name, args)] for tools that exist."""
+    if "DSML" not in text:
+        return []
+    out = []
+    heads = list(_DSML_INVOKE.finditer(text))
+    for k, m in enumerate(heads):
+        name = names.get(m.group(1).lower())
+        if not name:
+            continue
+        end = heads[k + 1].start() if k + 1 < len(heads) else len(text)
+        args = {}
+        for pm in _DSML_PARAM.finditer(text[m.end():end]):
+            key, is_str, raw = pm.group(1), pm.group(2), pm.group(3).strip()
+            raw = re.sub(r"<[^<>]*DSML[^<>]*>\s*$", "", raw).strip()
+            if key == "arguments":
+                try:
+                    val = json.loads(raw, strict=False)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(val, dict):
+                    args.update(val)
+                continue
+            if is_str == "false":
+                try:
+                    raw = json.loads(raw, strict=False)
+                except json.JSONDecodeError:
+                    pass
+            args[key] = raw
+        out.append((name, args))
+    return out
+
+
 def parse_reply(text: str, code_blocks: list[str], tools: list[dict] | None):
     """(content, tool_calls). Calls come from code blocks first (exact text),
     then from JSON found in the flattened text. Unknown tool names are NOT calls:
@@ -368,6 +407,8 @@ def parse_reply(text: str, code_blocks: list[str], tools: list[dict] | None):
             c = _as_call(obj, names)
             if c:
                 calls.append(c)
+    if not calls:
+        calls.extend(_dsml_calls(text, names))
     if not calls:
         # A fenced block in the exact call shape that names a tool we do not have (a model calling a
         # SKILL name as a tool, say) is a failed attempt, not prose: hand it to dsh, whose "Unknown
