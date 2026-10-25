@@ -137,6 +137,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="freeharness eval", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", default="gemini", help="auto | gemini | perplexity | qwen | grok")
+    ap.add_argument("--sticky", action="store_true", help="run with a sticky chat for the model under test")
     ap.add_argument("--tasks", help="comma-separated task ids (default: all)")
     ap.add_argument("--repeat", type=int, default=1)
     ap.add_argument("--keep", action="store_true", help="keep workspaces for inspection")
@@ -154,7 +155,7 @@ def main(argv=None) -> int:
         sys.exit(f"unknown task(s) {unknown}; see --list")
 
     providers = "gemini,qwen" if args.model == "auto" else args.model
-    shim = None if args.no_shim else ensure_shim(providers)
+    shim = None if args.no_shim else ensure_shim(providers, sticky=providers if args.sticky else "none")
     results = []
     try:
         for _rep in range(args.repeat):

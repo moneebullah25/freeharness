@@ -99,7 +99,7 @@ def _rotate(log: Path):
         pass
 
 
-def ensure_shim(providers: str = "gemini", wait: float = 30.0) -> subprocess.Popen | None:
+def ensure_shim(providers: str = "gemini", wait: float = 30.0, sticky: str = "") -> subprocess.Popen | None:
     """Start the OpenAI-compatible shim unless one is already answering.
     Returns the process only if WE started it (so the caller knows to stop it)."""
     if shim_health():
@@ -109,7 +109,7 @@ def ensure_shim(providers: str = "gemini", wait: float = 30.0) -> subprocess.Pop
     _rotate(logfile)
     log = os.fdopen(os.open(logfile, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "ab")
     proc = subprocess.Popen([sys.executable, "-m", "freeharness.backends.shim", "serve",
-                             "--providers", providers],
+                             "--providers", providers, *(["--sticky", sticky] if sticky else [])],
                             stdout=log, stderr=log, start_new_session=True)
     deadline = time.monotonic() + wait
     while time.monotonic() < deadline:

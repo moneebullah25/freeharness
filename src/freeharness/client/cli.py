@@ -22,6 +22,7 @@ from rich.console import Console
 from rich.rule import Rule
 
 from .. import paths
+from ..transcript import Transcript
 from .render import Renderer, turn_outcome
 from .rpc import (DSH_HOME, Runtime, RuntimeDied, RpcError, ensure_shim,
                   shim_health)
@@ -57,19 +58,22 @@ class App:
         self.shim_proc = None
         self.resumed = bool(args.resume)
         self.has_history = self.resumed
+        self.tr: Transcript | None = None
 
     # -- lifecycle ---------------------------------------------------------
 
     def start(self):
         if not self.args.no_shim:
             with self.c.status("starting the model shim…"):
-                self.shim_proc = ensure_shim(self.args.providers)
+                self.shim_proc = ensure_shim(self.args.providers, sticky=self.args.sticky)
         with self.c.status("starting dsh…"):
             self.rt.start()
             if self.resumed:
                 self.rt.resume(self.sid)
 
     def stop(self):
+        if self.tr:
+            self.tr.close()
         self.rt.close()
         if self.shim_proc and self.shim_proc.poll() is None:
             self.shim_proc.terminate()          # the shim's SIGTERM handler closes its browsers
@@ -82,10 +86,16 @@ class App:
 
     def turn(self, text: str) -> bool:
         rend = Renderer(self.c)
+        if self.tr is None or self.tr.path.stem != self.sid:        # /new and /resume change the session
+            if self.tr:
+                self.tr.close()
+            self.tr = Transcript(self.sid, self.rt.cwd)
+        self.tr.user(text)
         label = {"text": "waiting for the model…"}
         started = time.monotonic()
         with self.c.status(label["text"]) as status:
             def on_event(ev):
+                self.tr.event(ev)
                 new = rend.handle(ev)
                 if new:
                     label["text"] = new
@@ -209,6 +219,9 @@ def main(argv=None) -> int:
     ap.add_argument("--model", default="auto", choices=MODELS)
     ap.add_argument("--providers", default="gemini,qwen",
                     help="providers for a shim this client starts: comma-separated, or 'all' (default: %(default)s)")
+    ap.add_argument("--sticky", default="auto",
+                    help="providers that keep ONE chat per task and send only what is new: 'auto' (those verified by the eval: "
+                         "gemini), 'all', 'none', or a comma-separated list (default: auto)")
     ap.add_argument("--no-shim", action="store_true", help="do not start or check the shim")
     ap.add_argument("--resume", metavar="ID", help="resume a saved session")
     args = ap.parse_args(argv)

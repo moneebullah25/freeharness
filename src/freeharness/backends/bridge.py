@@ -431,6 +431,13 @@ class Session:
                       f"retrying\033[0m")
                 self.page.wait_for_timeout(1_500 * attempt)
 
+    def current_url(self) -> str | None:
+        """The page's address, for callers that must know whether it is still the same chat."""
+        try:
+            return self.page.url
+        except PWError:
+            return None
+
     def open_chat(self):
         # Several sites are tabs of one browser here; a background tab is "hidden"
         # and sites such as Grok then never mount their composer.

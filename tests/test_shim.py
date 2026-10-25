@@ -3,6 +3,7 @@
 
 Run: .venv/bin/python test_shim.py
 """
+import copy
 import json
 import socket
 import threading
@@ -34,9 +35,14 @@ class FakeSession:
         self.reply, self.blocks, self.error = reply, blocks or [], error
         self.chunks = chunks
         self.prompts, self.closed = [], False
+        self.fresh_flags, self.url = [], "https://site.test/c/1"
+
+    def current_url(self):
+        return self.url
 
     def ask(self, prompt, fresh=True, should_stop=None):
         self.prompts.append(prompt)
+        self.fresh_flags.append(fresh)
         if self.error:
             raise self.error
         for c in (self.chunks or [self.reply]):
@@ -188,6 +194,174 @@ def test_every_selectable_model_is_declared_to_the_harness():
     assert set(MODELS) <= declared, set(MODELS) - declared
     assert set(providers.PROVIDERS) <= declared, set(providers.PROVIDERS) - declared
     print("  models declared ..... ok")
+
+
+# ----------------------------------------------------------------- sticky threads
+
+TOOLS_S = [{"type": "function", "function": {"name": "bash", "description": "Run a command.",
+            "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}}]
+CALL = {"id": "call_1", "type": "function", "function": {"name": "bash", "arguments": '{"command": "ls"}'}}
+BLOCK = '{"name": "bash", "arguments": {"command": "ls"}}'
+
+
+def convo(n_tool_rounds):
+    """system + user + n x (assistant tool call, tool result), as the harness records it."""
+    msgs = [{"role": "system", "content": "be brief"}, {"role": "user", "content": "list files"}]
+    for i in range(n_tool_rounds):
+        call = copy.deepcopy(dict(CALL, id=f"call_{i}"))      # deep: tests mutate calls
+        msgs += [{"role": "assistant", "content": None, "tool_calls": [call]},
+                 {"role": "tool", "tool_call_id": f"call_{i}", "content": f"file{i}.txt"}]
+    return msgs
+
+
+def sticky_router(sess, **kw):
+    return shim.Router(["gemini"], lambda prov: sess, clock=Clock(), log=lambda m: None, sticky=["gemini"], **kw)
+
+
+def step(r, messages, tools=TOOLS_S, reply_blocks=(BLOCK,), text=""):
+    """One request through the router, then the reply is 'parsed' like the handler does."""
+    prompt = shim.render_prompt(messages, tools)
+    list(r.run("gemini", prompt, messages=messages, tools=tools))
+    content, calls = shim.parse_reply(text or "\n".join(f"```tool_call\n{b}\n```" for b in reply_blocks),
+                                      list(reply_blocks), tools)
+    r.note_reply("gemini", content, calls)
+    return calls
+
+
+def test_sticky_second_request_sends_only_the_new_part_in_the_same_chat():
+    s = FakeSession()
+    r = sticky_router(s)
+    step(r, convo(0))
+    step(r, convo(1))
+    assert s.fresh_flags == [True, False]
+    assert "# Tools" in s.prompts[0] and "# Tools" not in s.prompts[1], "tools/protocol are sent once"
+    assert "[tool_result bash]" in s.prompts[1] and "file0.txt" in s.prompts[1] and "list files" not in s.prompts[1]
+    assert len(s.prompts[1]) < len(s.prompts[0]) / 2
+    step(r, convo(2))
+    assert s.fresh_flags == [True, False, False] and "file1.txt" in s.prompts[2] and "file0.txt" not in s.prompts[2]
+    print("  sticky: delta only .. ok")
+
+
+def test_sticky_is_off_by_default():
+    s = FakeSession()
+    r = shim.Router(["gemini"], lambda prov: s, clock=Clock(), log=lambda m: None)
+    prompt = shim.render_prompt(convo(0), TOOLS_S)
+    list(r.run("gemini", prompt, messages=convo(0), tools=TOOLS_S))
+    list(r.run("gemini", shim.render_prompt(convo(1), TOOLS_S), messages=convo(1), tools=TOOLS_S))
+    assert s.fresh_flags == [True, True]
+
+
+def _second_request_is_fresh(mutate, session_mutate=None):
+    s = FakeSession()
+    r = sticky_router(s)
+    step(r, convo(0))
+    msgs = convo(1)
+    mutate(msgs)
+    if session_mutate:
+        session_mutate(s, r)
+    step(r, msgs)
+    assert s.fresh_flags == [True, True], "must fall back to a fresh chat with the full history"
+    assert "# Tools" in s.prompts[1] and "# Conversation" in s.prompts[1]
+
+
+def test_sticky_falls_back_to_a_fresh_chat_whenever_the_history_does_not_line_up():
+    _second_request_is_fresh(lambda m: m.__setitem__(1, {"role": "user", "content": "a DIFFERENT first message"}))   # compaction / edit
+    _second_request_is_fresh(lambda m: m[2]["tool_calls"][0]["function"].update(arguments='{"command": "rm -rf /"}'))  # reply differs
+    _second_request_is_fresh(lambda m: m.insert(1, {"role": "user", "content": "inserted into the seen history"}))     # prefix changed
+    _second_request_is_fresh(lambda m: m.append({"role": "assistant", "content": "unseen"}))                           # unseen assistant msg
+    _second_request_is_fresh(lambda m: None, lambda s, r: setattr(s, "url", "https://site.test/c/OTHER"))              # the page moved
+    _second_request_is_fresh(lambda m: None, lambda s, r: r.threads["gemini"].__setitem__("session", object()))         # session was rebuilt
+    print("  sticky: fallbacks ... ok")
+
+
+def test_sticky_a_new_user_message_after_our_reply_is_just_new_content():
+    s = FakeSession()
+    r = sticky_router(s)
+    step(r, convo(0))
+    msgs = convo(1)
+    msgs.insert(3, {"role": "user", "content": "also check hidden files"})       # arrives before the tool result
+    step(r, msgs)
+    assert s.fresh_flags == [True, False]
+    assert "also check hidden files" in s.prompts[1] and "file0.txt" in s.prompts[1]
+
+
+def test_sticky_new_tool_list_starts_a_new_chat():
+    s = FakeSession()
+    r = sticky_router(s)
+    step(r, convo(0))
+    step(r, convo(1), tools=TOOLS_S + [{"type": "function", "function": {"name": "read", "parameters": {}}}])
+    assert s.fresh_flags == [True, True]
+
+
+def test_sticky_chat_is_replaced_when_it_gets_long():
+    s = FakeSession()
+    r = sticky_router(s)
+    for i in range(shim.STICKY_MAX_STEPS + 2):
+        step(r, convo(i))
+    assert s.fresh_flags.count(True) == 2 and s.fresh_flags[0] is True and s.fresh_flags[shim.STICKY_MAX_STEPS] is True
+
+
+def test_sticky_forgets_the_chat_after_an_error_or_a_departing_client():
+    s = FakeSession()
+    r = sticky_router(s)
+    step(r, convo(0))
+    s.error = RuntimeError("boom")
+    try:
+        list(r.run("gemini", shim.render_prompt(convo(1), TOOLS_S), messages=convo(1), tools=TOOLS_S))
+    except Exception:  # noqa: BLE001, S110
+        pass
+    assert "gemini" not in r.threads
+    s2 = FakeSession(chunks=["a", "b", "c"])
+    r2 = sticky_router(s2)
+    step(r2, convo(0))
+    gen = r2.run("gemini", shim.render_prompt(convo(1), TOOLS_S), messages=convo(1), tools=TOOLS_S)
+    next(gen)
+    next(gen)
+    gen.close()
+    assert "gemini" not in r2.threads, "a half-sent reply must not be continued"
+
+
+def test_sticky_state_is_per_provider_so_failover_gets_the_full_history():
+    a, b = FakeSession(), FakeSession()
+    sess = {"gemini": a, "qwen": b}
+    r = shim.Router(["gemini", "qwen"], lambda prov: sess[prov.key], clock=Clock(), log=lambda m: None,
+                    sticky=["gemini", "qwen"])
+    step_prompt = lambda m: shim.render_prompt(m, TOOLS_S)  # noqa: E731
+    list(r.run("auto", step_prompt(convo(0)), messages=convo(0), tools=TOOLS_S))
+    r.note_reply("gemini", "", shim.parse_reply("```tool_call\n" + BLOCK + "\n```", [BLOCK], TOOLS_S)[1])
+    a.error = RuntimeError("You've reached your limit (quota)")             # gemini hits its limit on step 2
+    list(r.run("auto", step_prompt(convo(1)), messages=convo(1), tools=TOOLS_S))
+    assert b.fresh_flags == [True] and "list files" in b.prompts[0] and "# Tools" in b.prompts[0], "qwen must get everything"
+    print("  sticky: failover full ok")
+
+
+def test_sticky_through_the_http_handler_end_to_end():
+    s = FakeSession(reply="```tool_call\n" + BLOCK + "\n```", blocks=[BLOCK])
+    shim.Handler.router = sticky_router(s)
+    shim.Handler.worker = shim.Worker()
+    threading.Thread(target=shim.Handler.worker.run_forever, daemon=True).start()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), shim.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}/v1/chat/completions"
+
+    def post(messages):
+        req = urllib.request.Request(base, json.dumps({"model": "gemini", "messages": messages, "tools": TOOLS_S}).encode(),
+                                     {"Content-Type": "application/json"})
+        with urllib.request.urlopen(req) as r:
+            return json.load(r)["choices"][0]["message"]
+    try:
+        m1 = post(convo(0))
+        assert m1["tool_calls"][0]["function"]["name"] == "bash"
+        # the harness records OUR reply (with our call id) and appends the tool result
+        history = convo(0) + [{"role": "assistant", "content": None, "tool_calls": m1["tool_calls"]},
+                              {"role": "tool", "tool_call_id": m1["tool_calls"][0]["id"], "content": "a.txt"}]
+        post(history)
+        assert s.fresh_flags == [True, False], s.fresh_flags
+        assert "a.txt" in s.prompts[1] and "# Tools" not in s.prompts[1]
+    finally:
+        srv.shutdown()
+        shim.Handler.router = None
+    print("  sticky: via HTTP .... ok")
 
 
 def test_json_about_something_else_is_not_a_tool_call():

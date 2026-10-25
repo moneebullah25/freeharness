@@ -189,6 +189,9 @@ GROK = Provider(
 
 # Passed the tool-use eval: the default rotation, in order (docs/PROVIDERS.md).
 ELIGIBLE = ("gemini", "qwen")
+# Providers whose "continue one chat per task" mode passed the eval (Gemini: 8/8, 28 steps in 388 s vs
+# 8/8, 33 steps in 532 s with a fresh chat per step, 2026-10-25). Others stay opt-in until they do.
+STICKY_VERIFIED = ("gemini",)
 # Everything registered, eligible first. The rest failed the eval or cannot run headless:
 # Grok and Perplexity answer without using tools (0/8), so a turn that lands on them can
 # "finish" having changed nothing; ChatGPT is behind a Cloudflare check and needs a window.

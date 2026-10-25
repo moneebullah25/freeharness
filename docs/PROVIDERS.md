@@ -26,6 +26,11 @@ Sites that block headless Chrome (ChatGPT; DeepSeek returns HTTP 403 to the head
 window with their own profile**, because Chromium locks a profile to one browser and the shared one is headless. Their challenges are
 never bypassed and the browser is not disguised: a normal visible Chrome simply is not blocked. HuggingChat and Duck.ai have no provider entry (free quota used up / CAPTCHA).
 
+## Sticky chats
+`STICKY_VERIFIED` in `providers.py` lists providers whose one-chat-per-task mode passed the eval: Gemini 8/8 in 388 s over 28 steps (vs 8/8 in
+532 s over 33 steps with a fresh chat per step; single runs, 2026-10-25). Qwen, Grok, ChatGPT and DeepSeek run with a fresh chat per step
+until they pass the same comparison (`freeharness eval --model <name> --sticky`).
+
 ## Failover evidence
 With Gemini forced to fail with a quota error, the router put it on a 900 s cooldown and the same request was answered by a live Qwen
 session (2026-10-25; the router logic is also unit-tested). Rotation order is the `--providers` order: Gemini first (no login needed),

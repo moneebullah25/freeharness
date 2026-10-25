@@ -27,6 +27,7 @@ Binds to loopback only and requires a bearer token (see auth.py): it proxies log
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import queue
@@ -42,7 +43,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from .. import auth, paths
-from .providers import ELIGIBLE, PROVIDERS, Provider, resolve
+from .providers import ELIGIBLE, PROVIDERS, STICKY_VERIFIED, Provider, resolve
 
 MAX_BODY = 8_000_000
 
@@ -158,6 +159,63 @@ def render_prompt(messages: list[dict], tools: list[dict] | None) -> str:
                     "block instead of saying you cannot. Otherwise answer in plain text."
                     if tools else "Answer in plain text."))
     return "\n\n".join(parts)
+
+
+# ------------------------------------------------------- sticky threads (see Router)
+
+STICKY_MAX_STEPS = 20          # a chat that has taken this many requests is replaced by a fresh one
+STICKY_MAX_CHARS = 60_000      # ... or has been sent this many characters in total
+
+
+def _norm_calls(calls) -> list:
+    out = []
+    for c in calls or []:
+        fn = c.get("function", {})
+        args = fn.get("arguments") or "{}"
+        try:
+            args = json.loads(args) if isinstance(args, str) else args
+        except json.JSONDecodeError:
+            pass
+        out.append([fn.get("name"), json.dumps(args, sort_keys=True, ensure_ascii=False)])
+    return out
+
+
+def reply_fingerprint(content, calls) -> str:
+    """What the site was answered with, in a form the harness's recorded copy reproduces."""
+    blob = json.dumps([(content or "").strip(), _norm_calls(calls)], ensure_ascii=False)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def history_fingerprint(messages: list[dict], tools: list[dict] | None) -> str:
+    """Identity of a conversation prefix. Tools are included: a changed tool list invalidates it."""
+    norm = [[m.get("role"), _text(m.get("content")).strip(), _norm_calls(m.get("tool_calls")),
+             m.get("tool_call_id")] for m in messages]
+    names = sorted(t.get("function", t).get("name", "") for t in tools or [])
+    blob = json.dumps([norm, names], ensure_ascii=False)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def render_delta(new_messages: list[dict], tools: list[dict] | None, names: dict) -> str:
+    """Only the messages the site's chat has not seen, plus a one-line protocol reminder
+    (models drift from the tool-call format over a long chat; the full rules were sent once)."""
+    convo = []
+    for m in new_messages:
+        role = m.get("role")
+        if role == "tool":
+            nm = names.get(m.get("tool_call_id"), "tool")
+            convo.append(f"[tool_result {nm}]\n{_text(m.get('content')).strip()}")
+        elif role == "user":
+            convo.append(f"[user]\n{_text(m.get('content')).strip()}")
+    remind = ("Continue as the assistant, answering the MOST RECENT message. If the task still needs a file read, "
+              "a command or an edit, reply with ONLY fenced `tool_call` blocks (one JSON object each, exactly as "
+              "described at the start of this chat, nothing around them); otherwise answer in plain text."
+              if tools else "Continue as the assistant and answer in plain text.")
+    return "# New messages\n" + "\n\n".join(convo) + "\n\n" + remind
+
+
+def tool_names(messages: list[dict]) -> dict:
+    return {c["id"]: c["function"]["name"] for m in messages if m.get("role") == "assistant"
+            for c in m.get("tool_calls") or []}
 
 
 # -------------------------------------------------------------------- parsing
@@ -285,7 +343,7 @@ def classify(exc: Exception) -> str:
 class Router:
     """Owns one lazily-created Session per provider and the cooldown ledger."""
 
-    def __init__(self, keys, make_session, clock=time.monotonic, log=None):
+    def __init__(self, keys, make_session, clock=time.monotonic, log=None, sticky=()):
         self.keys = list(keys)
         self.make_session = make_session      # (Provider) -> Session-like
         self.clock = clock
@@ -293,6 +351,9 @@ class Router:
         self.sessions: dict[str, object] = {}
         self.until: dict[str, float] = {}
         self.why: dict[str, str] = {}
+        # Providers allowed to continue ONE chat across requests (send only what is new).
+        self.sticky = set(sticky)
+        self.threads: dict[str, dict] = {}     # provider -> what its current chat has seen
 
     def status(self) -> dict:
         now = self.clock()
@@ -306,6 +367,7 @@ class Router:
         return self.sessions[key]
 
     def _cool(self, key, kind, exc):
+        self.threads.pop(key, None)
         self.until[key] = self.clock() + COOLDOWN[kind]
         self.why[key] = f"{kind}: {str(exc)[:120]}"
         # a wedged browser must not be reused after a hard failure
@@ -324,7 +386,47 @@ class Router:
             return [model]
         raise KeyError(model)
 
-    def run(self, model: str, prompt: str, should_stop=None):
+    def _plan(self, key, sess, prompt, messages, tools):
+        """(text to send, fresh?, request fingerprint) for one provider.
+
+        Continue the provider's existing chat only if EVERYTHING still lines up: same session
+        object, same page, the history we sent is an unchanged prefix of the new request, the next
+        message is the very reply we returned, and the chat is not too long. Otherwise a fresh
+        chat gets the full prompt, which is exactly the non-sticky behaviour."""
+        if key not in self.sticky or messages is None:
+            return prompt, True, None
+        th = self.threads.get(key)
+        url = getattr(sess, "current_url", lambda: None)()
+        k = th["k"] if th else 0
+        ok = bool(
+            th and th["session"] is sess and th["reply_fp"] and url and url == th["url"]
+            and th["steps"] < STICKY_MAX_STEPS and th["chars"] < STICKY_MAX_CHARS
+            and len(messages) > k + 1 and messages[k].get("role") == "assistant"
+            and all(m.get("role") in ("tool", "user") for m in messages[k + 1:])
+            and reply_fingerprint(_text(messages[k].get("content")), messages[k].get("tool_calls")) == th["reply_fp"]
+            and history_fingerprint(messages[:k], tools) == th["prefix_fp"])
+        if not ok:
+            if th:
+                self.log(f"shim: {key} chat not continued (history changed or chat is full); starting a new one")
+            return prompt, True, {"fresh": True}
+        return (render_delta(messages[k + 1:], tools, tool_names(messages[:k + 1])), False,
+                {"fresh": False, "steps": th["steps"], "chars": th["chars"]})
+
+    def _remember(self, key, sess, messages, tools, sent_chars, plan):
+        """Record what this chat has seen (the reply fingerprint arrives later via note_reply)."""
+        carried = plan if plan and not plan["fresh"] else {}     # counts of the chat being continued
+        self.threads[key] = {
+            "session": sess, "url": getattr(sess, "current_url", lambda: None)(), "k": len(messages),
+            "prefix_fp": history_fingerprint(messages, tools), "reply_fp": None,
+            "steps": carried.get("steps", 0) + 1, "chars": carried.get("chars", 0) + sent_chars}
+
+    def note_reply(self, key, content, calls):
+        """Called once the reply is parsed; lets the NEXT request prove it follows this one."""
+        th = self.threads.get(key)
+        if th:
+            th["reply_fp"] = reply_fingerprint(content, calls)
+
+    def run(self, model: str, prompt: str, should_stop=None, *, messages=None, tools=None):
         """Generator of ("provider", key) once, then ("t", text) events, then
         ("done", code_blocks). Fails over only until the first text is yielded.
         `should_stop()` lets the caller abandon the generation (client left)."""
@@ -345,18 +447,23 @@ class Router:
             sess = None
             try:
                 sess = self._session(key)
-                self.log(f"shim: -> {key} ({len(prompt):,} chars)")
+                send, fresh, plan = self._plan(key, sess, prompt, messages, tools)
+                self.log(f"shim: -> {key} ({len(send):,} chars{'' if fresh else ', same chat'})")
+                self.threads.pop(key, None)            # unknown until this request finishes cleanly
                 yield ("provider", key)
-                for ev in sess.ask(prompt, fresh=True, should_stop=should_stop):
+                for ev in sess.ask(send, fresh=fresh, should_stop=should_stop):
                     if "t" in ev:
                         started = True
                         yield ("t", ev["t"])
                     else:
                         started = True
                         yield ("reset", ev["reset"])
+                if key in self.sticky and messages is not None:
+                    self._remember(key, sess, messages, tools, len(send), plan)
                 yield ("done", sess.code_blocks())
                 return
             except GeneratorExit:
+                self.threads.pop(key, None)            # partial reply: that chat can no longer be trusted
                 stop = getattr(sess, "stop_generation", None)
                 if stop:                       # the consumer left: stop burning free-tier quota
                     try:
@@ -367,6 +474,7 @@ class Router:
             except Exception as e:           # noqa: BLE001
                 if started:
                     raise                      # output already left: cannot fail over
+                self.threads.pop(key, None)
                 kind = classify(e)
                 self.log(f"shim: {key} failed ({kind}): {str(e)[:160]}")
                 self._cool(key, kind, e)
@@ -569,7 +677,8 @@ class Handler(BaseHTTPRequestHandler):
         prompt = render_prompt(messages, tools)
         try:
             events = stream_from_worker(
-                self.worker, lambda stop: self.router.run(model, prompt, should_stop=stop),
+                self.worker, lambda stop: self.router.run(model, prompt, should_stop=stop,
+                                                          messages=messages, tools=tools),
                 self.connection)
             self._drive(model, stream, want_usage, prompt, tools, events)
         except KeyError:
@@ -603,6 +712,8 @@ class Handler(BaseHTTPRequestHandler):
                                              ("provider", "text", "blocks", "streaming"))
         text = text or ""
         content, calls = parse_reply(text, blocks or [], tools)
+        if provider:
+            self.router.note_reply(provider, content, calls)
         if os.environ.get("SHIM_DEBUG"):         # raw replies, for diagnosing a site's markup
             with open(os.environ["SHIM_DEBUG"], "a") as f:
                 f.write(f"--- {provider} calls={len(calls)}\ntext={text!r}\nblocks={blocks!r}\n")
@@ -681,6 +792,19 @@ def _sse(payload: dict) -> bytes:
 
 # ------------------------------------------------------------------------ CLI
 
+def _sticky_keys(spec: str, keys) -> list[str]:
+    spec = (spec or "auto").strip().lower()
+    if spec in ("none", "off", "no"):
+        return []
+    if spec == "auto":
+        return [k for k in keys if k in STICKY_VERIFIED]
+    chosen = list(keys) if spec == "all" else [k.strip() for k in spec.split(",") if k.strip()]
+    bad = [k for k in chosen if k not in keys]
+    if bad:
+        sys.exit(f"--sticky names {bad}, which are not in --providers {list(keys)}")
+    return chosen
+
+
 def _alive(session) -> bool:
     try:
         _ = session.ctx.pages
@@ -689,7 +813,7 @@ def _alive(session) -> bool:
         return False
 
 
-def serve(host, port, keys, headless):
+def serve(host, port, keys, headless, sticky=()):
     if host not in ("127.0.0.1", "localhost", "::1"):
         sys.exit(f"refusing to bind {host}: this endpoint proxies logged-in browser "
                  f"sessions and must stay on loopback.")
@@ -718,7 +842,7 @@ def serve(host, port, keys, headless):
                                             user_data_dir=paths.chrome_profile(), channel="chrome")
         return root.tab(prov)
 
-    Handler.router = Router(keys, make)
+    Handler.router = Router(keys, make, sticky=sticky)
     Handler.token = None if os.environ.get("FREEHARNESS_NO_AUTH") else auth.load_or_create_token()
     Handler.worker = Worker()
     srv = ThreadingHTTPServer((host, port), Handler)
@@ -776,6 +900,9 @@ def main():
                         help="comma-separated in rotation order, or 'all' (every registered site that can run, "
                              "including ones that failed the eval). Default: %(default)s")
         sp.add_argument("--headed", action="store_true", help="show the browser windows")
+        sp.add_argument("--sticky", default=os.environ.get("FREEHARNESS_STICKY", "auto"),
+                        help="providers (comma-separated, or 'all') that continue ONE chat per task and send only "
+                             "what is new instead of a fresh chat with the whole history on every step: 'auto' (verified by the eval), 'all', 'none' or a list")
         if name == "serve":
             sp.add_argument("--host", default="127.0.0.1")
             sp.add_argument("--port", type=int, default=8766)
@@ -792,7 +919,7 @@ def main():
     if bad:
         sys.exit(f"unknown provider(s) {bad}; choose from {sorted(PROVIDERS)}")
     if args.cmd == "serve":
-        serve(args.host, args.port, keys, headless=not args.headed)
+        serve(args.host, args.port, keys, headless=not args.headed, sticky=_sticky_keys(args.sticky, keys))
     else:
         sys.exit(0 if any(check(keys, headless=not args.headed).values()) else 1)
 

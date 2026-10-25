@@ -8,6 +8,7 @@ freeharness: a terminal coding agent (DeepSeek Harness) on free web-chat backend
     freeharness doctor [--report]    check prerequisites
     freeharness serve                run only the OpenAI-compatible shim
     freeharness eval --model NAME    gate a provider with the tool-use eval
+    freeharness transcript [id]      list / print the readable record of past sessions
     freeharness vault <path>         connect a notes vault as read-only memory (--off to remove)
     freeharness version
 """
@@ -17,7 +18,7 @@ import sys
 
 from . import __version__
 
-SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "vault", "version")
+SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "vault", "transcript", "version")
 
 
 def main(argv=None) -> int:
@@ -32,6 +33,9 @@ def main(argv=None) -> int:
         return run(rest)
     if cmd == "login":
         from .login_cmd import main as run
+        return run(rest)
+    if cmd == "transcript":
+        from .transcript import main as run
         return run(rest)
     if cmd == "vault":
         from .vault_cmd import main as run

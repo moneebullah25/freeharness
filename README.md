@@ -39,6 +39,9 @@ freeharness -p "fix the failing test and run the suite"
 freeharness --model gemini           # pin one site;  default rotation is gemini,qwen
 freeharness --providers all          # every site that can run headless (see the warning below)
 ```
+Gemini keeps one chat per task and sends only what is new (`--sticky none` for a fresh chat per step); every session is also saved as
+readable markdown (`freeharness transcript`).
+
 In the session: `/help` `/model` `/providers` `/new` `/sessions` `/resume <id>` `/status` `/quit`.
 **Ctrl-C** abandons the current turn (the harness has no cancel call, so the runtime is restarted and the
 session resumed; the site may keep generating for a few seconds).
@@ -59,7 +62,7 @@ so each runs in its **own visible Chrome window** with its own profile: sign in 
 when the site is first used. Evidence: [docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ## Other commands
-`freeharness setup | login [site…] [--check] | doctor [--report] | vault <path> | serve | eval | version`
+`freeharness setup | login [site…] [--check] | doctor [--report] | vault <path> | transcript [id] | serve | eval | version`
 
 ## Where things live
 Per-user directories, owner-only; `FREEHARNESS_HOME=/dir` puts everything under one root. See [docs/PRIVACY.md](docs/PRIVACY.md).

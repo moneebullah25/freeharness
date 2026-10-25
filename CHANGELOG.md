@@ -23,6 +23,9 @@ First release.
 - Shim access control: per-install bearer token (0600) and loopback-only Host check.
 - Tool-use eval suite (8 tasks) that gates providers on workspace outcomes, not model claims.
 
+- Sticky chats: Gemini continues ONE chat per task and sends only what is new (verified: eval 8/8, 388 s vs 532 s; about 9K characters sent for a 5-step task instead of an estimated 39K),
+  with a safe fallback to a fresh chat on any mismatch; `--sticky auto|none|all|list`.
+- `freeharness transcript`: a readable markdown record of every session (prompts, replies, tool calls, results).
 - `freeharness vault <path>`: read-only notes-vault memory (MCP server with BM25 `vault_search` and `vault_read`), loaded through the new
   `<config>/overlay.d/*.yml` overlays; the skill tool is enabled; docs/MEMORY.md.
 - DeepSeek provider (visible window, own profile). Spot-checked, not yet through the eval. ChatGPT's visible window works after re-measuring its (rebuilt) page selectors, with one reload-and-retry for a composer that has not hydrated; its tool use is unreliable, so it stays out of the default rotation.

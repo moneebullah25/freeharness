@@ -58,10 +58,27 @@ You write them (or ask the agent to write one into the project); nothing creates
 A plain row (without `insert:`) only *patches* an existing entry and is skipped with "entry not found". Each server's tools are
 named `mcp__<serverName>__<tool>` and each adds prompt text, so add few. Third-party servers run with your permissions: review them.
 
+## One chat per task ("sticky" chats) and the readable record
+By default every model step used to open a fresh chat on the site and resend the whole history. Now, for providers that passed the
+eval in this mode (**Gemini**), the shim keeps ONE chat per task and sends only what is new (the tool results or your next message,
+plus a one-line reminder of the tool format; the full rules were sent once at the start). Measured 2026-10-25: a 5-step task sent
+~9K characters (the fresh-chat equivalent, ~39K, is computed from the prompt sizes of earlier runs, not a second run), and the Gemini eval stayed 8/8 while taking 388 s instead of 532 s.
+
+The shim continues a chat only if everything still lines up: same browser tab and page, the history it sent is an unchanged prefix
+of the new request, the next message is exactly the reply it returned, same tool list, and the chat has taken fewer than 20 steps
+and 60,000 characters. Anything else (Ctrl-C, `/resume`, compaction, an error, a client that left mid-reply) starts a **fresh chat
+with the full history**, which is also what happens when a provider hits its limit and another takes over: the new site gets the
+whole conversation from the harness's log. Control it with `--sticky auto|none|all|gemini,qwen`.
+
+Every prompt, reply, tool call and result is also written, as it happens, to a readable markdown file per session:
+`freeharness transcript` lists them and `freeharness transcript <id>` prints one (`~/.local/share/freeharness/transcripts/`, owner-only,
+tool results capped at 20,000 characters). It is the file to open or paste into any chat by hand. It contains whatever the agent read.
+
 ## Where things are stored
 | What | Where (Linux) |
 |---|---|
 | Session transcripts | `~/.local/share/freeharness/dsh-home/sessions/<workspace>/<session>/session.v4.jsonl.zstd` |
+| Readable transcripts | `~/.local/share/freeharness/transcripts/<session id>.md` |
 | Global instructions | `~/.local/share/freeharness/dsh-home/AGENTS.md` |
 | Global skills | `~/.local/share/freeharness/dsh-home/skills/` |
 | MCP / extra overlays | `~/.config/freeharness/overlay.d/*.yml` |
