@@ -26,6 +26,8 @@ Upstream default branch: main
 - Reproduce: `python3 -c 'from app import average; average([])'`
 - Expected: 0 or a clear error
 - Actual: ZeroDivisionError: division by zero
+- Documented: src/app.py:1 (the docstring says it averages a list)
+- Valid input because: an empty list is a list, which the signature accepts
 
 Repro output:
 
@@ -250,7 +252,7 @@ class StubRuntime:
     def close(self):
         StubRuntime.log.append(("close",))
 
-    def run_turn(self, sid, text, on_event=None, timeout=0, max_steps=None):
+    def run_turn(self, sid, text, on_event=None, timeout=0, max_steps=None, stop_when=None):
         StubRuntime.log.append(("turn", self.model, sid, max_steps, text))
         if self.model == StubRuntime.fail_first_on and sum(1 for e in StubRuntime.log if e[0] == "turn") == 1:
             return TurnResult(False, {"kind": "error"}, "", 4, [], 0, 1.0, [])

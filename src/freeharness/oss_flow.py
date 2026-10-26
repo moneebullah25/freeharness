@@ -73,7 +73,8 @@ Do not look for bugs yet and do not search GitHub.""",
 $extra
 1. Read the component's code in the clone `$name`. Use the review skill to look for ONE real bug: a file:line and a concrete input that goes wrong.
 2. REPRODUCE it. Call gh_setup_env {repo_dir: "$name"} (it returns a COMMAND PREFIX), write a throwaway script OUTSIDE the clone (`scratch/repro$cand.py` in your working directory) and run it with bash: `cd $name && <prefix> python ../scratch/repro$cand.py`. Its output must show the failure (a traceback or a wrong value).
-3. Write `reports/${name}_issues.md` (NOT inside the clone), layout in the oss-contribution skill (references/issues-file-template.md). $report_how Give the candidate section the lines `Where:` (file:line), `What is wrong:`, `Reproduce:` (the exact command), `Expected:`, `Actual:`, and paste the REAL output of the repro run under it.
+3. Write `reports/${name}_issues.md` (NOT inside the clone), layout in the oss-contribution skill (references/issues-file-template.md). $report_how Give the candidate section the lines `Where:` (file:line), `What is wrong:`, `Reproduce:` (the exact command), `Expected:`, `Actual:`, `Documented:` (where the project itself says what should happen: a file in the clone with :line, such as a docstring, a type annotation, an existing test or a docs page, or a URL) and `Valid input because:` (one sentence: why this call is a supported one), and paste the REAL output of the repro run under it.
+A bug is a supported call that gives a wrong result. Passing something the signature, the type annotations or the docs do not allow is misuse, not a bug: do not report it. If you cannot find such a bug in this component, say so and move to another file.
 Do not search GitHub and do not post anything yet. End with the line STAGE DONE.""",
 
     "dupcheck": """Candidate $cand: $cand_title
@@ -385,7 +386,8 @@ class Flow:
         have = _item_candidate(rep, n, sec)
         items, repro = st.find_repro(self.stage_calls(stage), sec)
         self._repro = repro
-        return [have] + items
+        clone, _ = st.find_clone(self.rd, self.repo)
+        return [have] + items + st.contract_items(sec, clone)
 
     def check_dupcheck(self, stage: Stage) -> list[dict]:
         rec_s = self.srec(stage)

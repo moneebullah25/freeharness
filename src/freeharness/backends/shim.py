@@ -345,7 +345,7 @@ def fit_messages(messages: list[dict], tools: list[dict] | None, budget: int | N
 # Safety nets only, NOT the normal way a chat ends: the normal ways are the site's own "full" notice, a
 # history that no longer matches (compaction / edit), a changed page or session, or an error.
 STICKY_MAX_STEPS = 400         # a chat that has taken this many requests is replaced by a fresh one
-MAX_NEW_CHATS_PER_HOUR = int(os.environ.get("FREEHARNESS_MAX_NEW_CHATS_PER_HOUR", "12"))   # per provider; 0 = no cap
+MAX_NEW_CHATS_PER_HOUR = int(os.environ.get("FREEHARNESS_MAX_NEW_CHATS_PER_HOUR", "6"))   # per provider; 0 = no cap
 STICKY_MAX_CHARS = 600_000     # ... or has been sent this many characters in total
 FRESH_TARGET = 0.5             # a fresh chat's prompt aims at this fraction of the limit (when one is known)
 FULL_REPLY_MAX = 1_500         # a "chat is full" notice is short; a longer reply is an answer
@@ -950,6 +950,9 @@ class Router:
             if len(recent) >= MAX_NEW_CHATS_PER_HOUR:
                 return False
             saved[key] = recent + [now]
+            if recent:
+                self.log(f"shim: warning: {key} is getting its {len(recent) + 1}th new chat in the last hour "
+                         f"(cap {MAX_NEW_CHATS_PER_HOUR}); one chat per task is the rule")
             try:
                 Path(self.chats_path).parent.mkdir(parents=True, exist_ok=True)
                 Path(self.chats_path).write_text(json.dumps(saved))

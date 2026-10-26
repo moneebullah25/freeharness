@@ -27,12 +27,15 @@ REPORT = ("mkdir -p reports && cat > reports/proj_issues.md <<'EOF'\n# up/proj: 
           "Upstream default branch: main\n\n## Candidate 1: average() raises ZeroDivisionError on an empty list\n"
           "- Where: src/app.py:2\n- What is wrong: it divides by len(xs) even when xs is empty\n"
           "- Reproduce: `cd proj && PYTHONPATH=src python3 -B -c 'from app import average; print(average([]))'`\n"
-          "- Expected: 0 or a clear error\n- Actual: ZeroDivisionError: division by zero\n\nRepro output:\n\n"
+          "- Expected: 0 or a clear error\n- Actual: ZeroDivisionError: division by zero\n"
+          "- Documented: src/app.py:1 (the docstring says average() of a list)\n"
+          "- Valid input because: an empty list is a list, which the signature accepts\n\nRepro output:\n\n"
           "    ZeroDivisionError: division by zero\n\n- Duplicate search: pending\nEOF")
 REPRO2 = bash("cd proj && PYTHONPATH=src python3 -B -c 'from app import average; print(average(None))'")
 REPORT2 = ("cat >> reports/proj_issues.md <<'EOF'\n\n## Candidate 2: average(None) raises TypeError\n- Where: src/app.py:2\n"
            "- What is wrong: no input validation\n- Reproduce: `cd proj && python3 -c 'from app import average; average(None)'`\n"
-           "- Expected: a clear ValueError\n- Actual: TypeError: 'NoneType' object is not iterable\n\nRepro output:\n\n"
+           "- Expected: a clear ValueError\n- Actual: TypeError: 'NoneType' object is not iterable\n"
+           "- Documented: src/app.py:1 (the docstring)\n- Valid input because: None is what a caller passes for no data\n\nRepro output:\n\n"
            "    TypeError: 'NoneType' object is not iterable\nEOF")
 ADD_TEST = bash("cd proj && cat >> tests/test_app.py <<'EOF'\n\n\nclass TestEmpty(unittest.TestCase):\n    def test_empty(self):\n"
                 "        self.assertEqual(average([]), 0)\nEOF")

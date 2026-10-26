@@ -207,6 +207,38 @@ def find_repro(stage_calls: list[dict], section: dict | None) -> tuple[list[dict
     return [run, ea, rep], repro
 
 
+_PATHISH = re.compile(r"[\w./\\-]+\.[A-Za-z0-9]{1,6}(?::\d+)?")
+
+
+def contract_items(section: dict | None, clone: Path | None) -> list[dict]:
+    """Is the candidate a breach of what the PROJECT says, not misuse? Two things the model must state in the section:
+    `Documented:` (a file in the clone, optionally `:line`, or a URL, where the docs, docstring, type annotation or an existing
+    test say what this input should do) and `Valid input because:` (why the failing call is a supported one). Only the
+    presence of the statement and that a cited file exists are checked here; whether the cited text really says it is
+    left to the human review of the issue draft."""
+    text = (section or {}).get("text", "")
+    doc, valid = field(text, "Documented"), field(text, "Valid input because")
+    found = ""
+    if doc and re.search(r"https?://\S+", doc):
+        found = re.search(r"https?://\S+", doc).group(0)
+    elif doc and clone:
+        for tok in _PATHISH.findall(doc):
+            rel = tok.rsplit(":", 1)[0] if re.search(r":\d+$", tok) else tok
+            if (clone / rel).is_file() or ("/" not in rel and next(clone.rglob(rel), None) is not None):
+                found = rel
+            if found:
+                break
+    a = _item("documented", "the candidate cites where the project documents the expected behaviour (a file in the clone or a URL)",
+              PASS if found else FAIL,
+              f"cited: {oj._clip(found, 70)}" if found else
+              ("the section has no 'Documented:' line" if not doc else
+               f"'Documented:' names no file that exists in the clone and no URL: {oj._clip(doc, 70)}"))
+    b = _item("valid_input", "the candidate says why the failing call is a supported one (not misuse of the API)",
+              PASS if len(valid) >= 20 else FAIL,
+              oj._clip(valid, 70) if len(valid) >= 20 else "the section has no 'Valid input because:' line of at least a sentence")
+    return [a, b]
+
+
 # --------------------------------------------------------------------------- stage 3: duplicate check
 
 _ROW = re.compile(r"^#(\d+) \[(pr|issue) (\w+)\] (.*?) \(@([^)]*)\)\s*$", re.M)
