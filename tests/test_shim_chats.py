@@ -588,3 +588,16 @@ def test_a_stale_shim_that_ignores_sigterm_is_still_replaced(monkeypatch):
     finally:
         p.kill()
         p.wait()
+
+
+def test_the_new_chat_count_survives_a_shim_restart(monkeypatch, tmp_path):
+    monkeypatch.setattr(shim, "MAX_NEW_CHATS_PER_HOUR", 2)
+    path = tmp_path / "chats.json"
+    for _ in range(2):                                   # two shim processes, one chat each
+        r = make_router("gemini", ScriptSession(), sticky=False, chats_path=path)
+        step(r, "gemini", convo(0))
+    r = make_router("gemini", ScriptSession(), sticky=False, chats_path=path)
+    with pytest.raises(shim.ProvidersFailed, match="new chats were started"):
+        step(r, "gemini", convo(1))
+    r.wall = lambda: __import__("time").time() + 3700
+    step(r, "gemini", convo(2))                          # an hour later it is allowed again

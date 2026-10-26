@@ -636,7 +636,7 @@ class Router:
     assumed: they are learned from failures (limits.Limits)."""
 
     def __init__(self, keys, make_session, clock=time.monotonic, log=None, sticky=(), limits=None,
-                 debug_prompts=None):
+                 debug_prompts=None, chats_path=None):
         self.keys = list(keys)
         self.make_session = make_session      # (Provider) -> Session-like
         self.clock = clock
@@ -651,6 +651,8 @@ class Router:
         self.fault = parse_fault(os.environ.get("FREEHARNESS_FAULT"))   # test hook: {provider: Nth request fails}
         self.requests: dict[str, int] = {}
         self.new_chats: dict[str, list[float]] = {}     # when each provider's chats were started (the last hour)
+        self.chats_path = chats_path                    # if set, that count survives a shim restart (wall-clock times)
+        self.wall = time.time
         self.debug_prompts = debug_prompts if debug_prompts is not None else os.environ.get("SHIM_DEBUG_PROMPTS")
         self._debug_last: list[str] = []
 
@@ -934,8 +936,25 @@ class Router:
 
     def _may_start_chat(self, key: str) -> bool:
         """Room for one more NEW chat on this site this hour? Counts it when there is. A site that sees dozens of
-        chats an hour from one account can suspend it, so the cap holds even when a request could otherwise go."""
+        chats an hour from one account can suspend it, so the cap holds even when a request could otherwise go,
+        and (with `chats_path`) across a restart of the shim."""
         if not MAX_NEW_CHATS_PER_HOUR:
+            return True
+        if self.chats_path:
+            now, saved = self.wall(), {}
+            try:
+                saved = json.loads(Path(self.chats_path).read_text())
+            except (OSError, ValueError):
+                pass
+            recent = [t for t in saved.get(key, []) if isinstance(t, (int, float)) and 0 <= now - t < 3600]
+            if len(recent) >= MAX_NEW_CHATS_PER_HOUR:
+                return False
+            saved[key] = recent + [now]
+            try:
+                Path(self.chats_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(self.chats_path).write_text(json.dumps(saved))
+            except OSError:
+                pass
             return True
         now = self.clock()
         recent = [t for t in self.new_chats.get(key, []) if now - t < 3600]
@@ -1315,7 +1334,8 @@ def serve(host, port, keys, headless, sticky=()):
                                             user_data_dir=paths.chrome_profile(), channel="chrome")
         return root.tab(prov)
 
-    Handler.router = Router(keys, make, sticky=sticky, limits=Limits(limits_path()))
+    Handler.router = Router(keys, make, sticky=sticky, limits=Limits(limits_path()),
+                            chats_path=paths.state_dir() / "chats.json")
     Handler.token = None if os.environ.get("FREEHARNESS_NO_AUTH") else auth.load_or_create_token()
     Handler.worker = Worker()
     srv = ThreadingHTTPServer((host, port), Handler)
