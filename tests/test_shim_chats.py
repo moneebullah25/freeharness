@@ -612,6 +612,17 @@ def test_a_vague_error_in_a_continued_chat_is_retried_in_the_same_chat_before_a_
     assert s.fresh_flags == [True, False, False] and len(s.prompts) == 3
 
 
+def test_the_other_gemini_wording_is_an_error_too_not_an_answer():
+    vague = RuntimeError("Gemini returned an error page: I seem to be encountering an error. Can I try something else for you?")
+    s = ScriptSession([(CALL_TEXT, [BLOCK]), vague, (CALL_TEXT, [BLOCK])])
+    r = make_router("gemini", s)
+    step(r, "gemini", convo(0))
+    step(r, "gemini", convo(1))
+    assert s.fresh_flags == [True, False, False]
+    from freeharness.backends import providers
+    assert any("i seem to be encountering an error" in m for m in providers.GEMINI.errors)
+
+
 def test_a_vague_error_twice_then_opens_a_new_chat_with_the_compact_history():
     vague = RuntimeError("Gemini returned an error page: I encountered an error doing what you asked.")
     s = ScriptSession([(CALL_TEXT, [BLOCK]), vague, vague, (CALL_TEXT, [BLOCK])])

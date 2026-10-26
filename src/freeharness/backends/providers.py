@@ -121,8 +121,11 @@ GEMINI = Provider(
     # asked" while steps of 8-12k chars were fine. A single observation, so it is NOT a ceiling: it is
     # only registered as a size-looking error, and the learned limit (limits.py) needs a repeat.
     errors=("something went wrong", "you've reached your limit", "try again later",
-            "can't help with that", "i can't help", "i encountered an error doing what you asked"),
-    size_errors=("i encountered an error doing what you asked",),
+            "can't help with that", "i can't help", "i encountered an error doing what you asked",
+            "i seem to be encountering an error"),
+    # MEASURED (dateutil run, 2026-10-26): the first 13.8k-char prompt of a fresh chat and three small follow-ups got
+    # "I seem to be encountering an error. Can I try something else for you?"; the shim handed it to the model as an answer.
+    size_errors=("i encountered an error doing what you asked", "i seem to be encountering an error"),
     full_markers=("conversation is too long", "start a new chat", "start a new conversation",
                   "too long for me to"),
     # `model-response` also holds UI chrome ("Show code", "Gemini said", "Processed
