@@ -925,6 +925,13 @@ class Router:
                     self.threads.pop(key, None)
                     site_full = sess is not None and self._page_full(sess)
                     length = self._length_looking(prov, e) or site_full
+                    if (not fresh and not same_retry and th_before is not None and not length
+                            and any(m in str(e).lower() for m in prov.transient_errors)):
+                        # "something went wrong, try again": try again in the SAME chat, once; never a new chat for it
+                        same_retry = True
+                        self.threads[key] = th_before
+                        self.log(f"shim: {key} errored in a continued chat ({str(e)[:80]}); trying the same chat once more")
+                        continue
                     if (length and not fresh and not site_full and not same_retry and th_before is not None
                             and self._only_generic_error(prov, e)):
                         # a generic error ("I encountered an error...") is not the site saying the chat is full: say it once

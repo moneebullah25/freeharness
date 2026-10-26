@@ -52,6 +52,7 @@ class Provider:
                                     # notice (page or reply). Seen => the shim stops continuing that chat
                                     # and starts a new one with a compact history. Wording is from memory
                                     # of each site and UNVERIFIED until seen live (docs/PROVIDERS.md).
+    transient_errors: tuple = ()    # site errors that mean "try again" (never "full"): one retry in the SAME chat
     size_errors: tuple = ()         # generic-looking site errors known to mean "prompt too big" for this
                                     # site (a measured one); treated like a length signal
     consent: tuple = ()             # buttons to click away after load (best effort)
@@ -126,6 +127,8 @@ GEMINI = Provider(
     # MEASURED (dateutil run, 2026-10-26): the first 13.8k-char prompt of a fresh chat and three small follow-ups got
     # "I seem to be encountering an error. Can I try something else for you?"; the shim handed it to the model as an answer.
     size_errors=("i encountered an error doing what you asked", "i seem to be encountering an error"),
+    # MEASURED (dateutil run): "Sorry, something went wrong. Please try your request again." on a 6k-char step of a healthy chat.
+    transient_errors=("something went wrong",),
     full_markers=("conversation is too long", "start a new chat", "start a new conversation",
                   "too long for me to"),
     # `model-response` also holds UI chrome ("Show code", "Gemini said", "Processed

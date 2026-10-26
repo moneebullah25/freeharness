@@ -623,6 +623,21 @@ def test_the_other_gemini_wording_is_an_error_too_not_an_answer():
     assert any("i seem to be encountering an error" in m for m in providers.GEMINI.errors)
 
 
+def test_a_transient_error_is_retried_once_in_the_same_chat_and_never_opens_a_new_one():
+    oops = RuntimeError("Gemini returned an error page: Sorry, something went wrong. Please try your request again.")
+    s = ScriptSession([(CALL_TEXT, [BLOCK]), oops, (CALL_TEXT, [BLOCK])])
+    r = make_router("gemini", s)
+    step(r, "gemini", convo(0))
+    step(r, "gemini", convo(1))
+    assert s.fresh_flags == [True, False, False]
+    s2 = ScriptSession([(CALL_TEXT, [BLOCK]), oops, oops, (CALL_TEXT, [BLOCK])])
+    r2 = make_router("gemini", s2)
+    step(r2, "gemini", convo(0))
+    with pytest.raises(shim.ProvidersFailed):
+        step(r2, "gemini", convo(1))
+    assert s2.fresh_flags == [True, False, False]                 # two tries in the chat, no new chat
+
+
 def test_a_vague_error_twice_then_opens_a_new_chat_with_the_compact_history():
     vague = RuntimeError("Gemini returned an error page: I encountered an error doing what you asked.")
     s = ScriptSession([(CALL_TEXT, [BLOCK]), vague, vague, (CALL_TEXT, [BLOCK])])
