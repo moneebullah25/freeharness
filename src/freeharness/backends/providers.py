@@ -123,12 +123,13 @@ GEMINI = Provider(
     # only registered as a size-looking error, and the learned limit (limits.py) needs a repeat.
     errors=("something went wrong", "you've reached your limit", "try again later",
             "can't help with that", "i can't help", "i encountered an error doing what you asked",
-            "i seem to be encountering an error"),
+            "i seem to be encountering an error", "i'm having a hard time fulfilling your request"),
     # MEASURED (dateutil run, 2026-10-26): the first 13.8k-char prompt of a fresh chat and three small follow-ups got
     # "I seem to be encountering an error. Can I try something else for you?"; the shim handed it to the model as an answer.
     size_errors=("i encountered an error doing what you asked", "i seem to be encountering an error"),
-    # MEASURED (dateutil run): "Sorry, something went wrong. Please try your request again." on a 6k-char step of a healthy chat.
-    transient_errors=("something went wrong",),
+    # MEASURED (dateutil run): also "I'm having a hard time fulfilling your request. Can I help you with something else instead?"
+    # after four good tool steps; "Sorry, something went wrong. Please try your request again." on a 6k-char step of a healthy chat.
+    transient_errors=("something went wrong", "i'm having a hard time fulfilling your request"),
     full_markers=("conversation is too long", "start a new chat", "start a new conversation",
                   "too long for me to"),
     # `model-response` also holds UI chrome ("Show code", "Gemini said", "Processed
