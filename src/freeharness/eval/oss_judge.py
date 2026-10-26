@@ -407,10 +407,19 @@ def oss_judge(run_dir) -> dict:
                            + (f"; component {_clip(comp_line.group(1), 60)!r}" if comp_line else "")
                            + ("; " + "; ".join(probs) if probs else "")))
 
-    # 5 issue draft passed the gate
+    # 5 issue draft passed the gate (a run that adopts an existing open issue files nothing: it must have READ that issue)
     issue_drafts = [d for d in drafts if d["action"] == "gh_issue_create"]
     pr_drafts = [d for d in drafts if d["action"] == "gh_pr_create"]
-    if issue_drafts:
+    adopted = _adopted_issue(rd)
+    if adopted:
+        read = [e for e in _jsonl(rd.evidence) if e.get("event") == "issue_read" and e.get("number") == adopted
+                and e.get("state") == "open"]
+        items.append(_item("issue_draft", "an issue draft exists and passed every gate", NA,
+                           f"--from-issues: the run works on the existing issue #{adopted}; nothing is filed"))
+        items.append(_item("issue_adopted", "(--from-issues) the issue the run works on is open and the run read it with gh_issue_read",
+                           PASS if read else FAIL,
+                           f"#{adopted} read while open" if read else f"no gh_issue_read of #{adopted} while it was open in the gate's evidence"))
+    elif issue_drafts:
         d = issue_drafts[-1]
         items.append(_item("issue_draft", "an issue draft exists and passed every gate", PASS,
                            f"draft {d['id']} ({d['mode']}): {_clip(parse_issue_draft(d['text'])['title'], 80)}"))
@@ -420,8 +429,11 @@ def oss_judge(run_dir) -> dict:
                            "no gh_issue_create draft saved by the gate" + (f"; last call: {_clip(refused[-1].get('text', ''), 140)}" if refused else "; the tool was never called")))
 
     # 6 issue number (live) / the PR closes THIS run's issue
-    issue_no = _issue_number(rd, calls, issue_drafts, live)
-    if live:
+    issue_no = adopted or _issue_number(rd, calls, issue_drafts, live)
+    if adopted:
+        items.append(_item("issue_posted", "(live) the issue was posted and has a number", NA,
+                           f"--from-issues: #{adopted} already exists; nothing to post"))
+    elif live:
         posted = [c for c in calls if _is(c, "gh_issue_create") and re.search(r"issue created: #(\d+)", c.get("text", ""))]
         items.append(_item("issue_posted", "(live) the issue was posted and has a number", PASS if posted else FAIL,
                            f"issue #{issue_no}" if posted else "no 'issue created: #N' tool result"))
@@ -447,7 +459,7 @@ def oss_judge(run_dir) -> dict:
         has_fix = bool(re.search(rf"\bFixes\s+#{pr['issue']}\b", pr["body"], re.I))
         mine = issue_no is not None and pr["issue"] == issue_no
         order_ok = True
-        if issue_drafts and pr_drafts:
+        if issue_drafts and pr_drafts and not adopted:
             order_ok = issue_drafts[0]["time"] <= pr_drafts[-1]["time"]
         ok = has_fix and mine and order_ok
         why = ([] if has_fix else [f"body lacks 'Fixes #{pr['issue']}'"])
@@ -578,6 +590,15 @@ def oss_judge(run_dir) -> dict:
     return {"run": rd.path.name, "repo": repo, "component": component, "live": live, "status_of_run": run.get("status", "?"),
             "checklist": items, "ok": ok, "failed": failed, "tool_calls": len(calls),
             "detail": ("failed: " + ", ".join(failed)) if failed else "all checks passed"}
+
+
+def _adopted_issue(rd: RunDir):
+    """--from-issues: the number of the EXISTING issue the staged run adopted (state.json), else None."""
+    s = _json(rd.state)
+    iss = s.get("issue") or {}
+    if s.get("source") == "issues" and iss.get("existing") and isinstance(iss.get("number"), int):
+        return iss["number"]
+    return None
 
 
 def _issue_number(rd: RunDir, calls, issue_drafts, live: bool):

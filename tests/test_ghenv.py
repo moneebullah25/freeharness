@@ -451,7 +451,7 @@ def test_the_pip_command_never_takes_an_index_from_the_repo(w, wheelhouse, monke
 def test_the_two_new_tools_are_listed_with_short_descriptions():
     names = [t["name"] for t in g.TOOLS]
     assert names[:8] == ["gh_repo_info", "gh_search", "gh_get_file", "gh_list_pr_files", "gh_pr_threads", "gh_fork", "gh_clone", "gh_branch"]
-    assert "gh_setup_env" in names and len(names) == 14
+    assert "gh_setup_env" in names and len(names) == 16
     for t in g.TOOLS:
         assert len(t["description"]) <= 100, t["name"]
     assert len(json.dumps(g.TOOLS)) < 5000

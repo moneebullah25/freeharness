@@ -39,9 +39,11 @@ class FakeGitHub:
                             **({"parent": {"full_name": fork_of}} if fork_of else {})}
         self.items.setdefault(full, [])
 
-    def add_item(self, repo, number, kind="issue", title="", body="", state="open", user="someone", merged=False, assignees=()):
+    def add_item(self, repo, number, kind="issue", title="", body="", state="open", user="someone", merged=False, assignees=(),
+                 labels=(), comments=()):
         self.items[repo].append({"number": number, "kind": kind, "title": title, "body": body, "state": state,
-                                 "user": user, "merged": merged, "assignees": list(assignees)})
+                                 "user": user, "merged": merged, "assignees": list(assignees), "labels": list(labels),
+                                 "comments": list(comments)})
 
     @property
     def url(self):
@@ -104,7 +106,9 @@ class FakeGitHub:
 
     def _issue_json(self, repo, it):
         d = {"number": it["number"], "title": it["title"], "body": it["body"], "state": it["state"],
-             "user": {"login": it["user"]}, "assignees": [{"login": a} for a in it["assignees"]]}
+             "user": {"login": it["user"]}, "assignees": [{"login": a} for a in it["assignees"]],
+             "labels": [{"name": n} for n in it.get("labels", [])], "comments": len(it.get("comments", [])),
+             "created_at": "2026-01-02T00:00:00Z", "updated_at": "2026-02-03T00:00:00Z"}
         if it["kind"] == "pr":
             d["pull_request"] = {"merged_at": "2026-01-01T00:00:00Z" if it["merged"] else None}
         return d
@@ -128,6 +132,14 @@ class FakeGitHub:
             return 200, out
         if method == "GET" and rest.startswith("/contents"):
             return self._contents(repo, rest[len("/contents"):].strip("/"))
+        if method == "GET" and rest == "/issues":
+            want = [x for x in q.get("labels", "").split(",") if x]
+            rows = [i for i in self.items[repo] if i["state"] == q.get("state", "open")
+                    and all(x in i.get("labels", []) for x in want)]
+            return 200, self._page([self._issue_json(repo, i) for i in rows], q)
+        if method == "GET" and (mm := re.match(r"^/issues/(\d+)/comments$", rest)):
+            it = next(i for i in self.items[repo] if i["number"] == int(mm.group(1)))
+            return 200, [{"user": {"login": a}, "body": b} for a, b in it.get("comments", [])]
         if method == "GET" and (mm := re.match(r"^/issues/(\d+)$", rest)):
             it = next(i for i in self.items[repo] if i["number"] == int(mm.group(1)))
             return 200, self._issue_json(repo, it)

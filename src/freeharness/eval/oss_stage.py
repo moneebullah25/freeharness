@@ -210,24 +210,36 @@ def find_repro(stage_calls: list[dict], section: dict | None) -> tuple[list[dict
 _PATHISH = re.compile(r"[\w./\\-]+\.[A-Za-z0-9]{1,6}(?::\d+)?")
 
 
-def contract_items(section: dict | None, clone: Path | None) -> list[dict]:
-    """Is the candidate a breach of what the PROJECT says, not misuse? Two things the model must state in the section:
-    `Documented:` (a file in the clone, optionally `:line`, or a URL, where the docs, docstring, type annotation or an existing
-    test say what this input should do) and `Valid input because:` (why the failing call is a supported one). Only the
-    presence of the statement and that a cited file exists are checked here; whether the cited text really says it is
-    left to the human review of the issue draft."""
+def _cited_file(text: str, clone: Path | None) -> str:
+    """The first file named in `text` (`path` or `path:line`) that exists in the clone ('' if none)."""
+    if not (text and clone):
+        return ""
+    for tok in _PATHISH.findall(text):
+        rel = tok.rsplit(":", 1)[0] if re.search(r":\d+$", tok) else tok
+        if (clone / rel).is_file():
+            return rel
+        if "/" not in rel and (hit := next(clone.rglob(rel), None)) is not None:
+            return str(hit.relative_to(clone))
+    return ""
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "")).strip().lower()
+
+
+def contract_items(section: dict | None, clone: Path | None, calls: list[dict] | None = None) -> list[dict]:
+    """Is the candidate a breach of what the PROJECT says, not misuse? What the model must state in the section:
+    `Documented:` (a file in the clone, optionally `:line`, or a URL, where the docs, docstring, type annotation or an
+    existing test say what this input should do), `Quote:` (the exact words it relies on; they must appear in that file
+    or in a tool result of the run, so an invented quote fails), `Intent checked:` (a file in the clone whose comments,
+    docstring or tests it read to see whether the current behaviour is deliberate) and `Valid input because:` (why the
+    failing call is a supported one). Presence, that cited files exist and that the quote is real are checked here;
+    whether the quote really means what the model says is left to the human review of the issue draft."""
     text = (section or {}).get("text", "")
-    doc, valid = field(text, "Documented"), field(text, "Valid input because")
-    found = ""
-    if doc and re.search(r"https?://\S+", doc):
-        found = re.search(r"https?://\S+", doc).group(0)
-    elif doc and clone:
-        for tok in _PATHISH.findall(doc):
-            rel = tok.rsplit(":", 1)[0] if re.search(r":\d+$", tok) else tok
-            if (clone / rel).is_file() or ("/" not in rel and next(clone.rglob(rel), None) is not None):
-                found = rel
-            if found:
-                break
+    doc, valid, quote, intent = (field(text, "Documented"), field(text, "Valid input because"), field(text, "Quote"),
+                                 field(text, "Intent checked"))
+    url = re.search(r"https?://\S+", doc or "")
+    found = url.group(0) if url else _cited_file(doc, clone)
     a = _item("documented", "the candidate cites where the project documents the expected behaviour (a file in the clone or a URL)",
               PASS if found else FAIL,
               f"cited: {oj._clip(found, 70)}" if found else
@@ -236,7 +248,46 @@ def contract_items(section: dict | None, clone: Path | None) -> list[dict]:
     b = _item("valid_input", "the candidate says why the failing call is a supported one (not misuse of the API)",
               PASS if len(valid) >= 20 else FAIL,
               oj._clip(valid, 70) if len(valid) >= 20 else "the section has no 'Valid input because:' line of at least a sentence")
-    return [a, b]
+    q = _squash(quote.strip("`\"'“”‘’ "))
+    where = ""
+    if len(q) >= 15:
+        rel = "" if url else _cited_file(doc, clone)
+        if rel and q in _squash((clone / rel).read_text(encoding="utf-8", errors="replace")):
+            where = rel
+        elif any(q in _squash(str(c.get("text", ""))) for c in (calls or [])):
+            where = "a tool result of this stage"
+    c = _item("quote_real", "the exact words the candidate relies on appear in the cited file or in a tool result",
+              PASS if where else FAIL,
+              f"found in {where}" if where else
+              ("the section has no 'Quote:' line of at least 15 characters" if len(q) < 15 else
+               f"the quote is not in the cited file or in any tool result of this stage: {oj._clip(quote, 70)}"))
+    i_file = _cited_file(intent, clone)
+    d = _item("intent_checked", "the candidate names a file in the clone it read to see if the behaviour is deliberate",
+              PASS if i_file else FAIL,
+              f"read for intent: {i_file}" if i_file else
+              ("the section has no 'Intent checked:' line" if not intent else
+               f"'Intent checked:' names no file that exists in the clone: {oj._clip(intent, 70)}"))
+    return [a, b, c, d]
+
+
+def issue_items(calls: list[dict], section: dict | None) -> list[dict]:
+    """Issues mode: the candidate names an open, unassigned issue (`Issue: #N`) that THIS stage read with gh_issue_read."""
+    raw = field((section or {}).get("text", ""), "Issue")
+    m = re.search(r"#?(\d+)", raw)
+    if not m:
+        return [_item("issue_chosen", "the candidate names the open issue it works on (`Issue: #N`)", FAIL,
+                      "the section has no 'Issue: #N' line")]
+    n = int(m.group(1))
+    reads = [c for c in calls if oj._is(c, "gh_issue_read") and not c.get("isError")
+             and str((c.get("args") or {}).get("number", "")).strip() == str(n)]
+    if not reads:
+        return [_item("issue_chosen", "the candidate names the open issue it works on (`Issue: #N`)", FAIL,
+                      f"#{n} was not read with gh_issue_read in this stage")]
+    head = str(reads[-1].get("text", ""))
+    bad = ([] if re.match(rf"#{n} \[open\]", head) else [f"#{n} is not open"]) \
+        + ([] if "assigned to: nobody" in head else ["it is assigned to someone"])
+    return [_item("issue_chosen", "the candidate names the open issue it works on (`Issue: #N`)", FAIL if bad else PASS,
+                  "; ".join(bad) if bad else f"#{n}: open, unassigned, read with gh_issue_read")]
 
 
 # --------------------------------------------------------------------------- stage 3: duplicate check

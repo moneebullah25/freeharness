@@ -158,6 +158,35 @@ def test_search_covers_open_and_closed_and_logs_evidence(w):
     assert "kind must be" in refused(gate.gh_search, "up/proj", "x", "commits")
 
 
+def test_list_issues_shows_open_issues_with_the_label_and_not_prs(w):
+    w.fake.add_item("up/proj", 21, "issue", "Crash on empty list", "boom", labels=["bug"], comments=[("bob", "me too")])
+    w.fake.add_item("up/proj", 22, "issue", "Add a feature", "please", labels=["enhancement"])
+    w.fake.add_item("up/proj", 23, "issue", "Old bug", "x", state="closed", labels=["bug"])
+    w.fake.add_item("up/proj", 24, "pr", "Fix crash", "x", labels=["bug"])
+    w.fake.add_item("up/proj", 25, "issue", "Taken bug", "y", labels=["bug"], assignees=["carol"])
+    gate = w.gate()
+    out = gate.gh_list_issues("up/proj", "bug")
+    assert "#21 Crash on empty list [labels: bug] unassigned; 1 comment(s)" in out
+    assert "#25 Taken bug" in out and "@carol" in out
+    assert "#22" not in out and "#23" not in out and "#24" not in out
+    assert "no open issues" in gate.gh_list_issues("up/proj", "nothing-here")
+    rows = [json.loads(x) for x in (w.state / "evidence.jsonl").read_text().splitlines()]
+    assert rows[0]["event"] == "list_issues" and rows[0]["label"] == "bug" and rows[0]["count"] == 2
+
+
+def test_issue_read_gives_state_labels_body_and_last_comments_and_refuses_prs(w):
+    w.fake.add_item("up/proj", 31, "issue", "Crash on empty list", "steps: call f([])", labels=["bug", "good first issue"],
+                    comments=[("bob", "confirmed on 2.1"), ("alice", "I will look")])
+    w.fake.add_item("up/proj", 32, "pr", "Fix", "x")
+    gate = w.gate()
+    out = gate.gh_issue_read("up/proj", 31)
+    assert "#31 [open] Crash on empty list" in out and "labels: bug, good first issue" in out
+    assert "steps: call f([])" in out and "comment by @bob" in out and "I will look" in out
+    assert "is a pull request" in refused(gate.gh_issue_read, "up/proj", 32)
+    rows = [json.loads(x) for x in (w.state / "evidence.jsonl").read_text().splitlines()]
+    assert rows[0]["event"] == "issue_read" and rows[0]["number"] == 31 and rows[0]["state"] == "open"
+
+
 def test_default_evidence_path_is_per_run_in_the_state_dir(w, monkeypatch):
     monkeypatch.setenv("FH_GH_STATE", str(w.tmp / "st"))
     monkeypatch.delenv("FH_GH_EVIDENCE", raising=False)
@@ -815,7 +844,8 @@ def test_stdio_protocol_lists_the_fourteen_tools_with_short_descriptions(w):
         tools = rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
         assert [t["name"] for t in tools] == ["gh_repo_info", "gh_search", "gh_get_file", "gh_list_pr_files", "gh_pr_threads",
                                               "gh_fork", "gh_clone", "gh_branch", "gh_setup_env", "gh_push",
-                                              "gh_issue_create", "gh_pr_create", "gh_pr_reply", "gh_pr_resolve_thread"]
+                                              "gh_issue_create", "gh_pr_create", "gh_pr_reply", "gh_pr_resolve_thread",
+                                              "gh_list_issues", "gh_issue_read"]
         assert max(len(t["description"]) for t in tools) <= 100
         assert len(json.dumps(tools)) < 5000, "the model sees these every step"
         assert rpc({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "rm_rf", "arguments": {}}})["error"]["code"] == -32602

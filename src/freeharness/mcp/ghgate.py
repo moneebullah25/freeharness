@@ -595,6 +595,48 @@ class Gate:
                         f"{_clip(it.get('title', ''), 100)} (@{(it.get('user') or {}).get('login', '?')})")
         return f"{total} result(s) for {kind} {clean!r} (open and closed)\n" + "\n".join(rows)
 
+    def gh_list_issues(self, repo: str, label: str = "bug") -> str:
+        """Open issues of the repo with one label, newest activity first (read only; logged as evidence)."""
+        repo = self._repo(repo)
+        label = " ".join(_text(label, "label", required=False).split())[:60] or "bug"
+        d = self.api.get(f"/repos/{repo}/issues", {"state": "open", "labels": label, "per_page": 30,
+                                                   "sort": "updated", "direction": "desc"})
+        if not isinstance(d, list):
+            raise ApiError(0, "unexpected issues response")
+        rows = []
+        for it in d:
+            if it.get("pull_request"):
+                continue
+            names = ",".join(str(x.get("name", "")) for x in it.get("labels") or [])
+            who = ",".join("@" + str(a.get("login", "?")) for a in it.get("assignees") or []) or "unassigned"
+            rows.append(f"#{it.get('number')} {_clip(it.get('title', ''), 100)} [labels: {names}] {who}; "
+                        f"{it.get('comments', 0)} comment(s); updated {str(it.get('updated_at', ''))[:10]}")
+        self._append(self.cfg.evidence, {"event": "list_issues", "run": self.cfg.run_id, "repo": repo, "label": label,
+                                         "time": time.time(), "count": len(rows)})
+        return (f"{len(rows)} open issue(s) labelled {label!r} (not pull requests)\n" + "\n".join(rows[:20])
+                if rows else f"no open issues labelled {label!r}")
+
+    def gh_issue_read(self, repo: str, number: int) -> str:
+        """One issue: state, labels, assignees, body and the last comments (read only; logged as evidence)."""
+        repo, n = self._repo(repo), _int(number, "number")
+        it = self.api.get(f"/repos/{repo}/issues/{n}")
+        if not isinstance(it, dict) or "number" not in it:
+            raise ApiError(0, "unexpected issue response")
+        if it.get("pull_request"):
+            raise Refuse(f"#{n} is a pull request, not an issue")
+        names = ", ".join(str(x.get("name", "")) for x in it.get("labels") or []) or "none"
+        who = ", ".join("@" + str(a.get("login", "?")) for a in it.get("assignees") or []) or "nobody"
+        lines = [f"#{n} [{it.get('state')}] {it.get('title', '')}", f"labels: {names}; assigned to: {who}; "
+                 f"opened by @{(it.get('user') or {}).get('login', '?')} on {str(it.get('created_at', ''))[:10]}; "
+                 f"{it.get('comments', 0)} comment(s)", "--- body ---", _clip(it.get("body") or "(empty)", 3500)]
+        if it.get("comments"):
+            cs = self.api.get(f"/repos/{repo}/issues/{n}/comments", {"per_page": 100})
+            for c in (cs if isinstance(cs, list) else [])[-5:]:
+                lines += [f"--- comment by @{(c.get('user') or {}).get('login', '?')} ---", _clip(c.get("body") or "", 800)]
+        self._append(self.cfg.evidence, {"event": "issue_read", "run": self.cfg.run_id, "repo": repo, "number": n,
+                                         "state": it.get("state"), "time": time.time()})
+        return "\n".join(lines)
+
     def gh_get_file(self, repo: str, path: str, ref: str = "") -> str:
         repo = self._repo(repo)
         path = _text(path, "path", required=False).strip("/")
@@ -1265,6 +1307,8 @@ TOOLS = [
     _tool("gh_pr_reply", "Reply to a review thread on your PR with a commit sha.", {"repo": S, "number": INT, "thread": S, "body": S, "sha": S},
           ["repo", "number", "thread", "body", "sha"]),
     _tool("gh_pr_resolve_thread", "Resolve a review thread you already replied to.", {"repo": S, "number": INT, "thread": S}, ["repo", "number", "thread"]),
+    _tool("gh_list_issues", "Open issues with one label (default bug), newest activity first.", {"repo": S, "label": S}, ["repo"]),
+    _tool("gh_issue_read", "Read one issue: state, labels, assignees, body, last comments.", {"repo": S, "number": INT}, ["repo", "number"]),
 ]
 TOOL_NAMES = {t["name"] for t in TOOLS}
 

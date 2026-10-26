@@ -1,6 +1,7 @@
 """
 `freeharness oss run <owner/repo> [--component NAME] [--models gemini,deepseek] [--live] [--max-steps N]`
 `freeharness oss run --resume <run-id>`                `freeharness oss run <owner/repo> --single-turn`
+`freeharness oss run <owner/repo> --from-issues [--label bug]`   (work on an existing open bug issue; files no new issue)
 `freeharness oss report <run-id> [--judge]`            `freeharness oss list`
 
 The "OSS contribution" evaluation: give the agent one real repo and the task of finding ONE real bug in ONE
@@ -140,7 +141,8 @@ def overlay_row(rd: oj.RunDir, live: bool) -> str:
 
 
 def prepare(repo: str, component: str, models: list[str], live: bool, max_steps: int, turn_timeout: float,
-            root: Path | None = None, single_turn: bool = False) -> oj.RunDir:
+            root: Path | None = None, single_turn: bool = False, from_issues: bool = False,
+            label: str = "bug") -> oj.RunDir:
     from . import oss_flow
     rd = oj.RunDir((root or oss_root()) / new_run_id())
     for d in (rd.path, rd.workspace, rd.gh_state, rd.overlay.parent, rd.transcripts) + (() if single_turn else (rd.stages_dir,)):
@@ -149,7 +151,8 @@ def prepare(repo: str, component: str, models: list[str], live: bool, max_steps:
                          encoding="utf-8")
     rd.config.write_text(json.dumps({"repo": repo, "component": component, "models": models, "live": live,
                                      "max_steps": max_steps, "turn_timeout": turn_timeout, "created": oj.now_iso(),
-                                     "task": "oss-contribution", "mode": "single-turn" if single_turn else "staged"},
+                                     "task": "oss-contribution", "mode": "single-turn" if single_turn else "staged",
+                                     "source": "issues" if from_issues else "code", "label": label},
                                     indent=1), encoding="utf-8")
     rd.overlay.write_text(overlay_row(rd, live), encoding="utf-8")
     return rd
@@ -294,7 +297,7 @@ def skills_missing() -> list[str]:
 def run(repo: str, component: str = "", models=("auto",), live: bool = False, max_steps: int = DEFAULT_MAX_STEPS,
         turn_timeout: float = DEFAULT_TURN_TIMEOUT, no_shim: bool = False, providers: str = "", approver_factory=None,
         console=None, root: Path | None = None, say=None, repair: int | None = None,
-        single_turn: bool = False) -> tuple[int, oj.RunDir | None]:
+        single_turn: bool = False, from_issues: bool = False, label: str = "bug") -> tuple[int, oj.RunDir | None]:
     """Run the evaluation. `approver_factory(rd)` -> an Approver (the CLI passes OssApprover when there is a terminal;
     tests pass a scripted human). Returns (exit code, run dir): 0 deterministic checks passed, 1 they did not or
     the run did not finish, 2 it could not run, 3 the staged run ended `blocked: duplicate` (a legitimate stop).
@@ -305,6 +308,9 @@ def run(repo: str, component: str = "", models=("auto",), live: bool = False, ma
     say = say or (lambda s: console.print(s, markup=False, highlight=False))
     if not REPO_RE.match(repo or ""):
         say(f"repo must look like owner/name, got {repo!r}")
+        return 2, None
+    if from_issues and single_turn:
+        say("--from-issues works with the staged flow only (not --single-turn)")
         return 2, None
     models = [m for m in models if m]
     if not models:
@@ -325,9 +331,9 @@ def run(repo: str, component: str = "", models=("auto",), live: bool = False, ma
     if not (os.environ.get("FH_GH_GIT_NAME") and os.environ.get("FH_GH_GIT_EMAIL")):
         say("note: FH_GH_GIT_NAME / FH_GH_GIT_EMAIL are not set; gh_clone then leaves the clone without a commit identity "
             "and the agent's `git commit` may fail")
-    rd = prepare(repo, component, models, live, max_steps, turn_timeout, root, single_turn)
+    rd = prepare(repo, component, models, live, max_steps, turn_timeout, root, single_turn, from_issues, label)
     say(f"run {rd.path.name}  ({'LIVE' if live else 'dry-run: nothing is posted'}, "
-        f"{'single-turn' if single_turn else 'staged'})\n  dir: {rd.path}\n  follow: tail -f {rd.supervisor}")
+        f"{'single-turn' if single_turn else 'staged' + (', from open issues' if from_issues else '')})\n  dir: {rd.path}\n  follow: tail -f {rd.supervisor}")
     if single_turn:
         code = execute(rd, repo, models, live, max_steps, turn_timeout, no_shim, providers, approver_factory, console, say,
                        DEFAULT_REPAIR if repair is None else repair)
@@ -527,8 +533,9 @@ def cmd_run(a, console) -> int:
     def factory(rd):
         return OssApprover(console, rd) if tty else None
     if a.resume:
-        if a.single_turn or a.component:
-            print("--resume continues a staged run as it was configured; it takes no --single-turn or --component", file=sys.stderr)
+        if a.single_turn or a.component or a.from_issues:
+            print("--resume continues a staged run as it was configured; it takes no --single-turn, --component or --from-issues",
+                  file=sys.stderr)
             return 2
         try:
             rd = oj.RunDir(resolve_run(a.resume))
@@ -575,7 +582,8 @@ def cmd_run(a, console) -> int:
     code, _ = run(a.repo, a.component or "", models, a.live,
                   DEFAULT_MAX_STEPS if a.max_steps is None else a.max_steps,
                   DEFAULT_TURN_TIMEOUT if a.turn_timeout is None else a.turn_timeout, a.no_shim, a.providers,
-                  factory if tty else None, console, repair=a.repair, single_turn=a.single_turn)
+                  factory if tty else None, console, repair=a.repair, single_turn=a.single_turn,
+                  from_issues=a.from_issues, label=a.label)
     return code
 
 
@@ -627,6 +635,10 @@ def main(argv=None) -> int:
                    help="when a stage's acceptance check fails (single-turn: when the model says it is done but the checklist "
                         "still fails), send back the unmet items as evidence for up to N more turns (default: 2 per stage; "
                         "0 = judge once, no feedback)")
+    p.add_argument("--from-issues", action="store_true",
+                   help="do not hunt in the code: the model picks ONE open, unassigned, labelled bug issue of the repo "
+                        "(gh_list_issues, gh_issue_read), reproduces it, fixes it and opens the PR that closes it; no new issue is filed")
+    p.add_argument("--label", default="bug", help="with --from-issues: the label to list first (default: bug)")
     p.add_argument("--single-turn", action="store_true",
                    help="the old behaviour: ONE prompt with all 13 steps (a free-tier model usually loses the thread)")
     p.add_argument("--resume", metavar="RUN", help="continue a staged run (id, prefix or 'latest') at its first unfinished "

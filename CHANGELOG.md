@@ -10,7 +10,16 @@ releases may include breaking changes; they will be listed under **Changed**.
 ### Changed
 - New chats are capped at 6 per provider per hour (`FREEHARNESS_MAX_NEW_CHATS_PER_HOUR`, 0 = no cap), counted in `<state>/chats.json` so a restart does
   not reset it; the shim logs a warning from the second new chat. A fresh chat gets a digest of older steps plus the newest 40 messages.
-- The `oss run` hunt stage now also requires `Documented:` and `Valid input because:` in the candidate (misuse of an API is not a bug).
+- The `oss run` hunt stage now also requires `Documented:`, `Quote:`, `Intent checked:` and `Valid input because:` in the candidate
+  (misuse of an API is not a bug). The quote must appear in the cited file or in a tool result of the stage, and `Intent checked:` must name
+  a file in the clone: a comment such as "nesting takes precedence" can no longer be skipped without a trace.
+
+### Added
+- `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
+  label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,
+  and the usual dupcheck, fix and PR stages follow. No new issue is filed (the issue stage adopts the existing one). New checks:
+  `issue_chosen` (the issue was read in the hunt stage, is open and unassigned), judge item `issue_adopted`; `issue_draft` and
+  `issue_posted` are n/a.
 - One chat per task is now the default for EVERY provider (`--sticky auto` = all; `--sticky none` is the off switch). Only Gemini is
   live-verified. A chat ends on the site's own "full" signals (new per-provider `full_markers`), a history mismatch or an error, not
   on a step/char cap (now safety nets: 400 requests / 600,000 chars); the shim no longer pre-trims the harness's messages.

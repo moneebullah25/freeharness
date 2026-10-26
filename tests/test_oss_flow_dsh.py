@@ -29,13 +29,14 @@ REPORT = ("mkdir -p reports && cat > reports/proj_issues.md <<'EOF'\n# up/proj: 
           "- Reproduce: `cd proj && PYTHONPATH=src python3 -B -c 'from app import average; print(average([]))'`\n"
           "- Expected: 0 or a clear error\n- Actual: ZeroDivisionError: division by zero\n"
           "- Documented: src/app.py:1 (the docstring says average() of a list)\n"
+          "- Quote: sum(xs) / len(xs)\n- Intent checked: src/app.py, no comment calls the empty case deliberate\n"
           "- Valid input because: an empty list is a list, which the signature accepts\n\nRepro output:\n\n"
           "    ZeroDivisionError: division by zero\n\n- Duplicate search: pending\nEOF")
 REPRO2 = bash("cd proj && PYTHONPATH=src python3 -B -c 'from app import average; print(average(None))'")
 REPORT2 = ("cat >> reports/proj_issues.md <<'EOF'\n\n## Candidate 2: average(None) raises TypeError\n- Where: src/app.py:2\n"
            "- What is wrong: no input validation\n- Reproduce: `cd proj && python3 -c 'from app import average; average(None)'`\n"
            "- Expected: a clear ValueError\n- Actual: TypeError: 'NoneType' object is not iterable\n"
-           "- Documented: src/app.py:1 (the docstring)\n- Valid input because: None is what a caller passes for no data\n\nRepro output:\n\n"
+           "- Documented: src/app.py:1 (the docstring)\n- Quote: sum(xs) / len(xs)\n- Intent checked: src/app.py has no note on None\n- Valid input because: None is what a caller passes for no data\n\nRepro output:\n\n"
            "    TypeError: 'NoneType' object is not iterable\nEOF")
 ADD_TEST = bash("cd proj && cat >> tests/test_app.py <<'EOF'\n\n\nclass TestEmpty(unittest.TestCase):\n    def test_empty(self):\n"
                 "        self.assertEqual(average([]), 0)\nEOF")
@@ -393,3 +394,64 @@ def test_live_staged_run_where_the_human_rejects_the_issue_is_blocked_not_repair
     reviews = [json.loads(x) for x in rd.reviews.read_text().splitlines()]
     assert reviews and all(r["outcome"] == "denied" for r in reviews)
 
+
+
+# ======================================================================================= --from-issues
+
+ISSUE_BRANCH = "fix/6-empty-average"
+REPORT_ISSUE = REPORT.replace("- Where: src/app.py:2\n", "- Issue: #6\n- Where: src/app.py:2\n", 1)
+
+
+def s_hunt_issue(read=6, report=REPORT_ISSUE):
+    return [gh("gh_list_issues", repo="up/proj", label="bug"), gh("gh_issue_read", repo="up/proj", number=read),
+            REPRO, bash(report), DONE]
+
+
+def run_issues(w, steps, **kw):
+    w.serve(steps)
+    code, rd = oss_cmd.run("up/proj", "", ["auto"], False, kw.pop("max_steps", 120), 300.0, no_shim=True,
+                           root=w.tmp / "runs", say=lambda s: None, from_issues=True, **kw)
+    assert rd is not None
+    return code, rd
+
+
+@needs_harness
+def test_from_issues_adopts_an_open_labelled_bug_and_files_no_new_issue(world):
+    world.fake.add_item("up/proj", 6, "issue", "average() crashes on an empty list", "average([]) divides by zero",
+                        labels=["bug"])
+    steps = s_setup() + s_hunt_issue() + s_dup() + s_fix(ISSUE_BRANCH) + s_pr(6, ISSUE_BRANCH)
+    code, rd = run_issues(world, steps)
+    res, it = checklist(rd)
+    assert res["ok"] and res["failed"] == [] and code == 0, res
+    s = state(rd)
+    assert s["source"] == "issues" and s["outcome"] == "completed"
+    assert s["issue"] == {"number": 6, "placeholder": False, "existing": True} and s["branch"] == ISSUE_BRANCH
+    assert s["stages"]["issue"]["status"] == "passed" and s["stages"]["issue"]["turns"] == 0
+    assert s["candidates"][0]["issue_no"] == 6
+    assert "gh_issue_create" not in rd.calls.read_text()
+    assert it["issue_draft"]["status"] == "na" and it["issue_posted"]["status"] == "na"
+    assert it["issue_adopted"]["status"] == "pass" and it["pr_fixes_issue"]["status"] == "pass", it["pr_fixes_issue"]
+    prompts = {sid: stage_log(rd, sid)[0]["prompt"] for sid in ("hunt", "dupcheck", "fix", "pr")}
+    assert "gh_list_issues" in prompts["hunt"] and "label: \"bug\"" in prompts["hunt"]
+    assert "open issue #6" in prompts["dupcheck"] and "an existing open issue of the project" in prompts["fix"]
+    assert json.loads(rd.config.read_text())["source"] == "issues"
+    text = oj.render_report(rd.path)
+    assert "- issue: passed" in text and "[PASS] issue_adopted" in text
+    assert_nothing_posted_and_no_global_change(world, rd)
+
+
+@needs_harness
+def test_from_issues_refuses_an_assigned_issue_and_one_that_was_not_read(world):
+    world.fake.add_item("up/proj", 6, "issue", "average() crashes on an empty list", "x", labels=["bug"], assignees=["bob"])
+    code, rd = run_issues(world, s_setup() + s_hunt_issue() + [{"text": "nothing else"}] * 6)
+    s = state(rd)
+    assert s["stages"]["hunt"]["status"] == "blocked" and code == 1
+    assert "issue_chosen" in " ".join(s["stages"]["hunt"]["unmet"]) and "assigned to someone" in " ".join(s["stages"]["hunt"]["unmet"])
+    assert s["stages"]["dupcheck"]["status"] == "pending"
+
+
+def test_from_issues_cli_rules(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("FREEHARNESS_HOME", str(tmp_path / "fh"))
+    assert oss_cmd.main(["run", "up/proj", "--from-issues", "--single-turn"]) == 2
+    assert "staged flow only" in capsys.readouterr().out + capsys.readouterr().err
+    assert oss_cmd.main(["run", "--resume", "latest", "--from-issues"]) == 2

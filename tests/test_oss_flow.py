@@ -27,6 +27,8 @@ Upstream default branch: main
 - Expected: 0 or a clear error
 - Actual: ZeroDivisionError: division by zero
 - Documented: src/app.py:1 (the docstring says it averages a list)
+- Quote: sum(xs) / len(xs)
+- Intent checked: src/app.py has no comment saying an empty list is deliberate
 - Valid input because: an empty list is a list, which the signature accepts
 
 Repro output:

@@ -73,7 +73,7 @@ Do not look for bugs yet and do not search GitHub.""",
 $extra
 1. Read the component's code in the clone `$name`. Use the review skill to look for ONE real bug: a file:line and a concrete input that goes wrong.
 2. REPRODUCE it. Call gh_setup_env {repo_dir: "$name"} (it returns a COMMAND PREFIX), write a throwaway script OUTSIDE the clone (`scratch/repro$cand.py` in your working directory) and run it with bash: `cd $name && <prefix> python ../scratch/repro$cand.py`. Its output must show the failure (a traceback or a wrong value).
-3. Write `reports/${name}_issues.md` (NOT inside the clone), layout in the oss-contribution skill (references/issues-file-template.md). $report_how Give the candidate section the lines `Where:` (file:line), `What is wrong:`, `Reproduce:` (the exact command), `Expected:`, `Actual:`, `Documented:` (where the project itself says what should happen: a file in the clone with :line, such as a docstring, a type annotation, an existing test or a docs page, or a URL) and `Valid input because:` (one sentence: why this call is a supported one), and paste the REAL output of the repro run under it.
+3. Write `reports/${name}_issues.md` (NOT inside the clone), layout in the oss-contribution skill (references/issues-file-template.md). $report_how Give the candidate section the lines `Where:` (file:line), `What is wrong:`, `Reproduce:` (the exact command), `Expected:`, `Actual:`, `Documented:` (where the project itself says what should happen: a file in the clone with :line, such as a docstring, a type annotation, an existing test or a docs page, or a URL), `Quote:` (the exact words from there that you rely on, copied character for character), `Intent checked:` (a file in the clone whose comments, docstring or tests you read to see whether this behaviour is deliberate, and what they say) and `Valid input because:` (one sentence: why this call is a supported one), and paste the REAL output of the repro run under it.
 A bug is a supported call that gives a wrong result. Passing something the signature, the type annotations or the docs do not allow is misuse, not a bug: do not report it. If you cannot find such a bug in this component, say so and move to another file.
 Do not search GitHub and do not post anything yet. End with the line STAGE DONE.""",
 
@@ -106,6 +106,25 @@ End with the line STAGE DONE.""",
 2. gh_push {repo_dir: "$name", branch: "$branch"} (plain push, never force).
 3. gh_pr_create {repo: "$repo", head: "$branch", base: "$default", title: like the commit line, body: from the repo's PR template with `Fixes #$issue`, issue: $issue}. Tick a checklist box only if it is true.
 End with the line STAGE DONE.""",
+}
+
+# --stages that read an EXISTING open issue instead of filing one (`oss run --from-issues`); the other stages are shared
+PROMPTS_ISSUES = {
+    "hunt": """$comp
+$extra
+1. gh_list_issues {repo: "$repo", label: "$label"} (if nothing fits, try the labels "good first issue" or "help wanted"). Read up to 4 of them with gh_issue_read. Choose ONE issue that is open, has nobody assigned, names a concrete failing call or a traceback you can run, and whose comments do not say a fix is on the way or that the maintainers disagree. A feature request or a question is not a bug. Never choose an issue you did not read.
+2. Read the code it points to in the clone `$name`. REPRODUCE the failure yourself. Call gh_setup_env {repo_dir: "$name"} (it returns a COMMAND PREFIX), write a throwaway script OUTSIDE the clone (`scratch/repro$cand.py` in your working directory) and run it with bash: `cd $name && <prefix> python ../scratch/repro$cand.py`. Its output must show the failure (a traceback or a wrong value). An open issue can be wrong too: you still have to show it.
+3. Write `reports/${name}_issues.md` (NOT inside the clone), layout in the oss-contribution skill (references/issues-file-template.md). $report_how Give the candidate section the lines `Issue:` (#N), `Where:` (file:line), `What is wrong:`, `Reproduce:` (the exact command), `Expected:`, `Actual:`, `Documented:` (where the project itself says what should happen: a file in the clone with :line, such as a docstring, a type annotation, an existing test or a docs page, or a URL), `Quote:` (the exact words from there that you rely on, copied character for character), `Intent checked:` (a file in the clone whose comments, docstring or tests you read to see whether this behaviour is deliberate, and what they say) and `Valid input because:` (one sentence: why this call is a supported one), and paste the REAL output of the repro run under it.
+A bug is a supported call that gives a wrong result. Passing something the signature, the type annotations or the docs do not allow is misuse, not a bug: do not report it. If this issue is not a bug after all, say so and choose another one.
+Do not search for other things on GitHub and do not post anything. End with the line STAGE DONE.""",
+
+    "dupcheck": """Candidate $cand: $cand_title (open issue #$issue_no, already filed: you will NOT file a new issue).
+Run gh_search AT LEAST 4 times with DIFFERENT queries, for kind "issues" AND kind "prs", looking for a PULL REQUEST that already fixes #$issue_no (the issue number, the exact error text, the function name, the file path) and for ANOTHER issue that is the same bug. Open and closed are both searched. #$issue_no itself will show up in the results: it is not a duplicate of itself.
+For each hit that could be the same bug or a fix, write one line in the candidate's duplicate-search table in `reports/${name}_issues.md` saying whether it overlaps and why.
+Then end your final message with exactly one of these lines:
+DECISION: proceed        (no PR fixes #$issue_no and no other issue covers it)
+DECISION: duplicate:#N   (another issue or PR #N is the same bug and is the better place for it)
+DECISION: competing:#N   (an open PR #N already fixes it)""",
 }
 
 STAGES = [
@@ -156,9 +175,10 @@ def _clip(s, n=300) -> str:
     return oj._clip(s, n)
 
 
-def new_state(rd: oj.RunDir, repo: str, component: str, live: bool) -> dict:
+def new_state(rd: oj.RunDir, repo: str, component: str, live: bool, source: str = "code", label: str = "bug") -> dict:
     return {"version": STATE_VERSION, "run": rd.path.name, "session": "oss-" + rd.path.name, "repo": repo,
             "component": component, "live": live, "mode": "staged", "order": [s.id for s in STAGES],
+            "source": source, "label": label,
             "stages": {s.id: {"status": "pending", "turns": 0, "repairs": 0, "reviews": 0, "steps": 0} for s in STAGES},
             "history": [], "candidate_no": 1, "candidates": [], "dropped": [], "model_idx": 0, "steps_total": 0,
             "current": "", "outcome": "starting", "blocked": None, "issue": None, "branch": "", "prefix": "",
@@ -176,6 +196,7 @@ class Flow:
         self.say, self.info = say, info
         self.repo, self.live, self.sid = state["repo"], bool(state["live"]), state["session"]
         self.name = self.repo.split("/")[1]
+        self.from_issues = state.get("source") == "issues"
         self.stop = ""                      # why the run stopped early: 'max_steps' | 'models' | ''
         self.CHECKS = {"setup": self.check_setup, "hunt": self.check_hunt, "dupcheck": self.check_dupcheck,
                        "fix": self.check_fix}
@@ -227,7 +248,8 @@ class Flow:
         if c.get("repro"):
             lines.append(f"- repro: `{_clip(c['repro']['command'], 160)}`")
         if s["issue"]:
-            lines.append(f"- issue: #{s['issue']['number']}" + (" (dry-run placeholder)" if s["issue"].get("placeholder") else ""))
+            lines.append(f"- issue: #{s['issue']['number']}" + (" (dry-run placeholder)" if s["issue"].get("placeholder") else
+                                                              " (an existing open issue of the project)" if s["issue"].get("existing") else ""))
         if s["branch"]:
             lines.append(f"- branch: {s['branch']}")
         return "\n".join(lines)
@@ -241,18 +263,23 @@ class Flow:
                 if self.state["component"] else
                 (f"Stay in the component you chose: {s['component']}." if s["component"] else
                  "Pick ONE small component yourself (one module or package) and name it on the report line `Component reviewed:`."))
+        if self.from_issues:
+            comp = ((f"Only consider issues about `{s['component']}` (a directory or module of the repo)."
+                     if s["component"] else
+                     "The component is whichever module the chosen issue is about: name it on the report line `Component reviewed:`."))
         extra = ""
         if s["dropped"]:
             d = s["dropped"][-1]
             extra = (f"Your previous candidate ({_clip(d.get('title', ''), 80)}) was dropped: {d['decision']}"
-                     f"{' (' + d['hit'] + ')' if d.get('hit') else ''}. Pick a DIFFERENT real bug in the same component. "
+                     f"{' (' + d['hit'] + ')' if d.get('hit') else ''}. Pick a DIFFERENT real "
+                     f"{'open issue' if self.from_issues else 'bug in the same component'}. "
                      "If you cannot find another one, say so and end with the line DECISION: no_other_candidate.")
         repro = c.get("repro") or {}
         placeholder = bool((s["issue"] or {}).get("placeholder"))
         return {
             "n": self.state["order"].index(stage.id) + 1, "title": stage.title, "repo": self.repo, "name": self.name,
             "mode": oss_cmd.mode_text(self.live), "summary": self.summary(), "comp": comp, "extra": extra,
-            "cand": n, "cand_title": c.get("title", ""), "default": s["default_branch"] or "<the upstream default branch>",
+            "cand": n, "cand_title": c.get("title", ""), "label": s.get("label", "bug"), "issue_no": c.get("issue_no", "<N>"), "default": s["default_branch"] or "<the upstream default branch>",
             "report_how": ("Start it with the line `Component reviewed: <path>` and a `## Candidate 1: <title>` section."
                            if n == 1 else "Keep the file and ADD a `## Candidate 2: <title>` section."),
             "section": _clip((sec or {}).get("text", ""), 2500).strip(), "repro_cmd": _clip(repro.get("command", ""), 600),
@@ -261,12 +288,15 @@ class Flow:
             "issue_note": ("dry-run: nothing is posted; the tool returns a PLACEHOLDER number: use it everywhere an issue "
                            "number is needed" if not self.live else
                            "live: the human approves or rejects the draft; use the REAL number from the result")
-            if stage.id != "fix" else ("the dry-run placeholder number" if placeholder else "the number the issue got"),
+            if stage.id != "fix" else ("an existing open issue of the project: you do not file, edit or comment on it"
+                                       if (s["issue"] or {}).get("existing") else
+                                       "the dry-run placeholder number" if placeholder else "the number the issue got"),
         }
 
     def render(self, stage: Stage) -> str:
         ctx = self.context(stage)
-        return Template(HEADER + stage.prompt).safe_substitute(ctx)
+        prompt = PROMPTS_ISSUES.get(stage.id, stage.prompt) if self.from_issues else stage.prompt
+        return Template(HEADER + prompt).safe_substitute(ctx)
 
     def repair_prompt(self, stage: Stage, unmet: list[dict]) -> str:
         lines = "\n".join(f"- {i['id']}: {_clip(i['evidence'], 240)}" for i in unmet)
@@ -387,7 +417,8 @@ class Flow:
         items, repro = st.find_repro(self.stage_calls(stage), sec)
         self._repro = repro
         clone, _ = st.find_clone(self.rd, self.repo)
-        return [have] + items + st.contract_items(sec, clone)
+        extra = st.issue_items(self.stage_calls(stage), sec) if self.from_issues else []
+        return [have] + items + extra + st.contract_items(sec, clone, self.stage_calls(stage))
 
     def check_dupcheck(self, stage: Stage) -> list[dict]:
         rec_s = self.srec(stage)
@@ -424,6 +455,9 @@ class Flow:
             c.update(title=sec.get("title", ""), where=st.field(sec.get("text", ""), "Where"),
                      expected=st.field(sec.get("text", ""), "Expected"), actual=st.field(sec.get("text", ""), "Actual"),
                      repro=getattr(self, "_repro", None) or c.get("repro"))
+            if self.from_issues:
+                m = re.search(r"#?(\d+)", st.field(sec.get("text", ""), "Issue"))
+                c["issue_no"] = int(m.group(1)) if m else None
         elif stage.id == "dupcheck":
             d = getattr(self, "_decision", None)
             if d:
@@ -531,7 +565,8 @@ class Flow:
             return ""
         rep = st.read_report(self.rd, self.repo)
         sec = st.candidate_section(rep, self.state["candidate_no"]) or {}
-        ov = st.overlapping(getattr(self, "_rows", []), sec.get("text", ""))
+        own = self.cand().get("issue_no")
+        ov = st.overlapping([r for r in getattr(self, "_rows", []) if r["number"] != own], sec.get("text", ""))
         if not ov:
             return ""
         rec_s["reviews"] = 1
@@ -552,7 +587,8 @@ class Flow:
         """A duplicate / competing decision: another candidate (at most MAX_CANDIDATES) or 'blocked: duplicate'."""
         c = self.cand()
         d = c.get("decision") or {}
-        if d.get("kind") in (None, "proceed"):
+        if d.get("kind") in (None, "proceed") or (self.from_issues and d.get("number") == c.get("issue_no")
+                                                   and d.get("kind") == "duplicate"):
             return ""
         label = f"{d['kind']}:#{d.get('number')}"
         if self.state["candidate_no"] >= MAX_CANDIDATES:
@@ -570,6 +606,17 @@ class Flow:
         self.checkpoint()
         return ""
 
+    def adopt_issue(self, stage: Stage) -> None:
+        """Issues mode: the issue stage files nothing. The chosen open issue (read and checked in the hunt stage) is the one
+        the fix and the PR work on; the judge later checks that this run read it and that the PR closes it."""
+        c = self.cand()
+        n = c.get("issue_no")
+        self.state["issue"] = {"number": n, "placeholder": False, "existing": True}
+        self.srec(stage).update(status="passed", turns=0, finished=oj.now_iso(), unmet=[], adopted=n)
+        self.stage_log(stage, {"event": "adopted", "issue": n, "title": c.get("title", "")})
+        self.note(f"issue: adopted the existing open issue #{n}; nothing is filed")
+        self.checkpoint()
+
     def run_all(self) -> str:
         while True:
             stage = self.next_stage()
@@ -577,6 +624,9 @@ class Flow:
                 self.state["outcome"] = "completed"
                 self.checkpoint()
                 return "completed"
+            if stage.id == "issue" and self.from_issues:
+                self.adopt_issue(stage)
+                continue
             if self.run_stage(stage) == "blocked":
                 return "blocked"
             if stage.id == "dupcheck" and self.after_dupcheck() == "blocked":
@@ -608,7 +658,7 @@ def execute_flow(rd: oj.RunDir, repo: str, models: list[str], live: bool, max_st
     state = oj._json(rd.state) if resume else {}
     if not state:
         cfg = oj._json(rd.config)
-        state = new_state(rd, repo, cfg.get("component", ""), live)
+        state = new_state(rd, repo, cfg.get("component", ""), live, cfg.get("source", "code"), cfg.get("label", "bug"))
     state["outcome"] = "running"
     oss_cmd.write_json(rd.run, info)
     approver = approver_factory(rd) if approver_factory else None
