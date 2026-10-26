@@ -376,3 +376,16 @@ def test_resume_can_give_a_run_that_hit_max_steps_a_bigger_budget(stub):
     s = json.loads(rd.state.read_text())
     assert s["outcome"].startswith("blocked at setup: unmet after 0 repair turn(s)")      # it ran again instead of stopping at once
     assert sum(1 for e in StubRuntime.log if e[0] == "turn") == n_turns + 1
+
+
+def test_resume_with_models_replaces_the_stored_list_so_a_suspended_provider_is_not_used(stub):
+    code, rd = oss_cmd.run("up/proj", "src", ["gemini", "deepseek"], False, 5, 60.0, no_shim=True, root=stub / "runs",
+                           say=lambda s: None)
+    StubRuntime.log.clear()
+    assert oss_cmd.main(["run", "--resume", str(rd.path), "--models", "qwen", "--max-steps", "60", "--no-shim",
+                         "--repair", "0"]) == 1
+    assert json.loads(rd.config.read_text())["models"] == ["qwen"]
+    assert {e[1] for e in StubRuntime.log if e[0] == "turn"} == {"qwen"}
+    StubRuntime.log.clear()
+    assert oss_cmd.main(["run", "--resume", str(rd.path), "--no-shim", "--repair", "0"]) == 1      # no --models: keeps qwen
+    assert {e[1] for e in StubRuntime.log if e[0] == "turn"} == {"qwen"}

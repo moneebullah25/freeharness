@@ -340,8 +340,9 @@ def run(repo: str, component: str = "", models=("auto",), live: bool = False, ma
 
 def resume_run(rd: oj.RunDir, no_shim: bool = False, providers: str = "", approver_factory=None, console=None, say=None,
                repair: int | None = None, turn_timeout: float | None = None,
-               max_steps: int | None = None) -> tuple[int, oj.RunDir | None]:
-    """`freeharness oss run --resume <run-id>`: the same session, workspace and state; continue at the first unfinished stage."""
+               max_steps: int | None = None, models: list[str] | None = None) -> tuple[int, oj.RunDir | None]:
+    """`freeharness oss run --resume <run-id>`: the same session, workspace and state; continue at the first unfinished stage.
+    `models` (an explicit --models on the resume) replaces the run's stored list, e.g. when a provider is suspended."""
     from rich.console import Console
 
     from . import oss_flow
@@ -369,7 +370,10 @@ def resume_run(rd: oj.RunDir, no_shim: bool = False, providers: str = "", approv
     if not github_cmd.token_available():
         say("GITHUB_TOKEN is not in the environment (or FH_GH_ENVFILE): every gh_* tool needs it. Nothing was started.")
         return 2, None
-    models = [m for m in cfg.get("models", []) if m] or ["auto"]
+    models = [m for m in (models or cfg.get("models", [])) if m] or ["auto"]
+    if models != cfg.get("models"):
+        cfg["models"] = models
+        write_json(rd.config, cfg)
     if max_steps is not None and max_steps != cfg.get("max_steps"):      # e.g. the run stopped at --max-steps: give it more
         cfg["max_steps"] = max_steps
         write_json(rd.config, cfg)
@@ -542,8 +546,13 @@ def cmd_run(a, console) -> int:
                     not in ("y", "yes"):
                 print("not started")
                 return 2
+        named = [m.strip() for m in a.models.split(",") if m.strip() and m.strip() != "auto"]
+        bad = [m for m in named if m not in MODELS]
+        if bad:
+            print(f"unknown model(s) {bad}; choose from {', '.join(MODELS)}", file=sys.stderr)
+            return 2
         code, _ = resume_run(rd, a.no_shim, a.providers, factory if tty else None, console, repair=a.repair,
-                             turn_timeout=a.turn_timeout, max_steps=a.max_steps)
+                             turn_timeout=a.turn_timeout, max_steps=a.max_steps, models=named or None)
         return code
     if not a.repo:
         print("give the repo (owner/name) or --resume <run-id>", file=sys.stderr)
