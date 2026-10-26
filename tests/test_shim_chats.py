@@ -601,3 +601,21 @@ def test_the_new_chat_count_survives_a_shim_restart(monkeypatch, tmp_path):
         step(r, "gemini", convo(1))
     r.wall = lambda: __import__("time").time() + 3700
     step(r, "gemini", convo(2))                          # an hour later it is allowed again
+
+
+def test_a_vague_error_in_a_continued_chat_is_retried_in_the_same_chat_before_a_new_one_is_opened():
+    vague = RuntimeError("Gemini returned an error page: I encountered an error doing what you asked. Could you try again?")
+    s = ScriptSession([(CALL_TEXT, [BLOCK]), vague, (CALL_TEXT, [BLOCK])])
+    r = make_router("gemini", s)
+    step(r, "gemini", convo(0))
+    step(r, "gemini", convo(1))                                   # errors once, then goes through in the SAME chat
+    assert s.fresh_flags == [True, False, False] and len(s.prompts) == 3
+
+
+def test_a_vague_error_twice_then_opens_a_new_chat_with_the_compact_history():
+    vague = RuntimeError("Gemini returned an error page: I encountered an error doing what you asked.")
+    s = ScriptSession([(CALL_TEXT, [BLOCK]), vague, vague, (CALL_TEXT, [BLOCK])])
+    r = make_router("gemini", s)
+    step(r, "gemini", convo(0))
+    step(r, "gemini", convo(1))
+    assert s.fresh_flags == [True, False, False, True]

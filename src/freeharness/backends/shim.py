@@ -717,6 +717,17 @@ class Router:
         return any(m in msg for m in (*prov.full_markers, *prov.size_errors, *LENGTH_WORDS))
 
     @staticmethod
+    def _only_generic_error(prov: Provider, exc) -> bool:
+        """The error matches only the site's vague size-looking message ("I encountered an error..."), never an explicit
+        "conversation is too long / start a new chat" wording: worth one retry in the same chat before leaving it."""
+        if isinstance(exc, SiteFull):
+            return False
+        msg = str(exc).lower()
+        if any(m in msg for m in (*prov.full_markers, *LENGTH_WORDS)):
+            return False
+        return any(m in msg for m in prov.size_errors)
+
+    @staticmethod
     def _reply_says_full(prov: Provider, text: str, blocks) -> bool:
         t = (text or "").strip()
         if not t or len(t) > FULL_REPLY_MAX or blocks:
@@ -855,7 +866,8 @@ class Router:
             sess = None
             force_fresh = False
             fresh, send, plan = True, "", None
-            for attempt in (0, 1):
+            same_retry = False
+            for attempt in (0, 1, 2):
                 try:
                     sess = self._session(key)
                     send, fresh, plan = self._plan(key, sess, lambda k=key: fresh_for(k), messages, tools,
@@ -867,6 +879,7 @@ class Router:
                         break
                     self.log(f"shim: -> {key} ({len(send):,} chars{'' if fresh else ', same chat'})")
                     self._debug_prompt(key, fresh, send)
+                    th_before = self.threads.get(key)
                     self.threads.pop(key, None)            # unknown until this request finishes cleanly
                     yield ("provider", key)
                     self.requests[key] = self.requests.get(key, 0) + 1
@@ -910,8 +923,17 @@ class Router:
                     if started:
                         raise                      # output already left: cannot fail over
                     self.threads.pop(key, None)
-                    length = self._length_looking(prov, e) or (sess is not None and self._page_full(sess))
-                    if length and attempt == 0:
+                    site_full = sess is not None and self._page_full(sess)
+                    length = self._length_looking(prov, e) or site_full
+                    if (length and not fresh and not site_full and not same_retry and th_before is not None
+                            and self._only_generic_error(prov, e)):
+                        # a generic error ("I encountered an error...") is not the site saying the chat is full: say it once
+                        # more in the SAME chat before giving it up (a new chat is a risk to the account)
+                        same_retry = True
+                        self.threads[key] = th_before
+                        self.log(f"shim: {key} errored in a continued chat ({str(e)[:80]}); trying the same chat once more")
+                        continue
+                    if length and attempt < 2:
                         if not fresh:
                             # the chat we were continuing is full: same site, NEW chat, compact history
                             self.log(f"shim: {key} chat is full ({str(e)[:100]}); starting a new one with a compact history")
