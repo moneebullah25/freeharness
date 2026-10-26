@@ -119,6 +119,14 @@ def _stop_stale_shim(health: dict) -> bool:
         if not shim_health(0.5):
             return True
         time.sleep(0.25)
+    try:                                   # stuck in a browser call and ignoring SIGTERM: it is ours, so end it
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        return False
+    for _ in range(20):
+        if not shim_health(0.5):
+            return True
+        time.sleep(0.25)
     return False
 
 

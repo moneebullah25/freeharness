@@ -567,3 +567,24 @@ def test_new_chats_per_hour_are_capped_so_an_account_is_never_flooded(monkeypatc
     r.clock.t += 3601                                    # an hour later there is room again
     step(r, "gemini", convo(4))
     assert len(s.prompts) == 4
+
+
+def test_a_stale_shim_that_ignores_sigterm_is_still_replaced(monkeypatch):
+    """ensure_shim(restart_stale=True) must not give up when the old shim is stuck in a browser call."""
+    import subprocess
+    import sys
+    import time
+
+    from freeharness.client import rpc
+    code = "import signal,time;signal.signal(signal.SIGTERM, signal.SIG_IGN);print('up',flush=True);time.sleep(60)"
+    p = subprocess.Popen([sys.executable, "-c", code, "freeharness.backends.shim"], stdout=subprocess.PIPE)
+    try:
+        assert p.stdout.readline().strip() == b"up"
+        monkeypatch.setattr(rpc, "shim_health", lambda timeout=1.0: {"pid": p.pid} if p.poll() is None else None)
+        real_sleep = time.sleep
+        monkeypatch.setattr(rpc.time, "sleep", lambda s: real_sleep(0.01))
+        assert rpc._stop_stale_shim({"pid": p.pid}) is True
+        assert p.wait(5) < 0                             # killed by a signal
+    finally:
+        p.kill()
+        p.wait()
