@@ -374,6 +374,8 @@ def resume_run(rd: oj.RunDir, no_shim: bool = False, providers: str = "", approv
     if models != cfg.get("models"):
         cfg["models"] = models
         write_json(rd.config, cfg)
+        state["model_idx"] = 0                           # the old index pointed into the old list
+        write_json(rd.state, state)
     if max_steps is not None and max_steps != cfg.get("max_steps"):      # e.g. the run stopped at --max-steps: give it more
         cfg["max_steps"] = max_steps
         write_json(rd.config, cfg)

@@ -382,9 +382,12 @@ def test_resume_with_models_replaces_the_stored_list_so_a_suspended_provider_is_
     code, rd = oss_cmd.run("up/proj", "src", ["gemini", "deepseek"], False, 5, 60.0, no_shim=True, root=stub / "runs",
                            say=lambda s: None)
     StubRuntime.log.clear()
+    st = json.loads(rd.state.read_text())
+    st["model_idx"] = 1                                            # it had already moved on to the second model
+    oss_cmd.write_json(rd.state, st)
     assert oss_cmd.main(["run", "--resume", str(rd.path), "--models", "qwen", "--max-steps", "60", "--no-shim",
                          "--repair", "0"]) == 1
-    assert json.loads(rd.config.read_text())["models"] == ["qwen"]
+    assert json.loads(rd.config.read_text())["models"] == ["qwen"] and json.loads(rd.state.read_text())["model_idx"] == 0
     assert {e[1] for e in StubRuntime.log if e[0] == "turn"} == {"qwen"}
     StubRuntime.log.clear()
     assert oss_cmd.main(["run", "--resume", str(rd.path), "--no-shim", "--repair", "0"]) == 1      # no --models: keeps qwen
