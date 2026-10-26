@@ -132,7 +132,7 @@ class App:
         with self.c.status(label["text"]) as status:
             if self.approver:
                 self.approver.status = status               # paused while the approval question is asked
-            watch = loopguard.Watch() if loopguard.enabled(getattr(self.args, "loop_guard", False)) else None
+            watch = loopguard.Watch() if loopguard.enabled(getattr(self.args, "loop_guard", True)) else None
             warned = set()
 
             def on_event(ev):
@@ -299,8 +299,8 @@ def main(argv=None) -> int:
     ap.add_argument("--sticky", default="auto",
                     help="providers that keep ONE chat per task and send only what is new: 'auto' (every provider; only "
                          "gemini is live-verified), 'all', 'none' (a fresh chat per step), or a comma-separated list (default: auto)")
-    ap.add_argument("--loop-guard", action="store_true",
-                    help="OFF by default (also FREEHARNESS_LOOP_GUARD=1): warn when the same tool call returned the same "
+    ap.add_argument("--no-loop-guard", dest="loop_guard", action="store_false",
+                    help="turn the loop guard off (also FREEHARNESS_LOOP_GUARD=0). On by default: warn when the same tool call returned the same "
                          "output 3+ times in the last 8 calls")
     ap.add_argument("--max-steps", type=int, default=60, metavar="N",
                     help="abandon a turn that starts more than N model steps; 0 = no limit (default: %(default)s)")

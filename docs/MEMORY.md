@@ -108,10 +108,11 @@ characters, not from dsh.
 time, owner-only) and one summary line per prompt (provider, fresh/sticky, size, first and last 300 characters) to `<file>.index`.
 The prompts contain whatever the agent read; the shim token is never part of a prompt and is never written.
 
-**Loop guard (off by default).** `--loop-guard` or `FREEHARNESS_LOOP_GUARD=1`: when the same tool call (name + arguments) returned the same
+**Loop guard (on by default).** `--no-loop-guard` or `FREEHARNESS_LOOP_GUARD=0` turns it off. When the same tool call (name + arguments) returned the same
 output 3+ times in the last 8 calls, the interactive client prints a warning, and the `oss run` stage engine ends that turn and sends a
 repair turn that quotes the call and says it returned the same output each time and asks for the next DIFFERENT action (it never names
-one; at most 2 such turns per stage turn). Off until the root fix above is confirmed live, so that it cannot mask a model that has lost its data.
+one; at most 2 such turns per stage turn). It was enabled only after the root cause of the earlier loops (a model that no longer had the
+data it had read: one new chat per step, history pinned and blanked) was fixed; it catches what is left.
 
 Every prompt, reply, tool call and result is also written, as it happens, to a readable markdown file per session:
 `freeharness transcript` lists them and `freeharness transcript <id>` prints one (`~/.local/share/freeharness/transcripts/`, owner-only,

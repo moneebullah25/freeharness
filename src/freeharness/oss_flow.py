@@ -168,7 +168,7 @@ class Flow:
     """One execution of the stage list over a Runtime. `state` is the checkpoint; everything else is recomputed."""
 
     def __init__(self, rd: oj.RunDir, state: dict, rt, rec: oss_cmd.Recorder, models: list[str], max_steps: int,
-                 turn_timeout: float, repair: int | None, say, info: dict, loop_guard: bool = False):
+                 turn_timeout: float, repair: int | None, say, info: dict, loop_guard: bool = True):
         self.loop_guard = loop_guard
         self.rd, self.state, self.rt, self.rec = rd, state, rt, rec
         self.models, self.max_steps, self.turn_timeout, self.repair = models, max_steps, turn_timeout, repair
@@ -281,7 +281,7 @@ class Flow:
         prompt. Returns the TurnResult, or None when the run must stop (self.stop says why)."""
         rec_s = self.srec(stage)
         original, cur = prompt, prompt
-        guard = loopguard.enabled(self.loop_guard)         # OFF unless --loop-guard / FREEHARNESS_LOOP_GUARD=1
+        guard = loopguard.enabled(self.loop_guard)         # ON unless --no-loop-guard / FREEHARNESS_LOOP_GUARD=0
         watch, loops = loopguard.Watch(), 0
         while True:
             left = (self.max_steps - self.steps) if self.max_steps else None

@@ -70,14 +70,15 @@ def test_thresholds_are_parameters():
     assert loopguard.detect_repeat([c(), c(), c()], threshold=4) is None
 
 
-def test_off_unless_asked(monkeypatch):
+def test_on_unless_switched_off(monkeypatch):
     monkeypatch.delenv("FREEHARNESS_LOOP_GUARD", raising=False)
-    assert loopguard.enabled() is False and loopguard.enabled(True) is True
-    for v in ("1", "true", "YES", "on"):
+    assert loopguard.enabled() is True and loopguard.enabled(False) is False
+    for v in ("1", "true", "YES", "on", ""):
         monkeypatch.setenv("FREEHARNESS_LOOP_GUARD", v)
         assert loopguard.enabled() is True
-    monkeypatch.setenv("FREEHARNESS_LOOP_GUARD", "0")
-    assert loopguard.enabled() is False
+    for v in ("0", "false", "No", "off"):
+        monkeypatch.setenv("FREEHARNESS_LOOP_GUARD", v)
+        assert loopguard.enabled() is False and loopguard.enabled(True) is False
 
 
 def call_events(n, name="bash", args=None, text="clean", prefix="c"):
@@ -121,8 +122,8 @@ class LoopRuntime(StubRuntime):
         return TurnResult(True, {"kind": "completed"}, "done", 3, [], 0, 1.0, [])
 
 
-def test_guard_is_off_by_default_in_the_oss_engine(stub, monkeypatch):  # noqa: F811
-    monkeypatch.delenv("FREEHARNESS_LOOP_GUARD", raising=False)
+def test_guard_can_be_switched_off_in_the_oss_engine(stub, monkeypatch):  # noqa: F811
+    monkeypatch.setenv("FREEHARNESS_LOOP_GUARD", "0")
     monkeypatch.setattr(oss_cmd.rpc, "Runtime", LoopRuntime)
     oss_cmd.run("up/proj", "src", ["auto"], False, 0, 60.0, no_shim=True, root=stub / "runs", say=lambda s: None, repair=0)
     turns = [e for e in StubRuntime.log if e[0] == "turn"]
@@ -174,7 +175,7 @@ def test_a_persistent_loop_is_repaired_at_most_twice_per_turn(stub, monkeypatch)
 def test_client_flag_and_help_exist():
     from freeharness.client import cli
     src = Path(cli.__file__).read_text()
-    assert "--loop-guard" in src and "loopguard.Watch()" in src
+    assert "--no-loop-guard" in src and "loopguard.Watch()" in src
 
 
 # ------------------------------------------------------------ real dsh: the turn really ends

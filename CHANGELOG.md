@@ -18,7 +18,7 @@ releases may include breaking changes; they will be listed under **Changed**.
 
 ### Added
 - `SHIM_DEBUG_PROMPTS=<file>`: the last 3 full prompts sent (owner-only) plus a one-line-per-prompt index.
-- Loop guard (off by default; `--loop-guard` / `FREEHARNESS_LOOP_GUARD=1`): `loopguard.py`.
+- Loop guard (on by default; `--no-loop-guard` / `FREEHARNESS_LOOP_GUARD=0` turns it off): `loopguard.py`.
 - Staged workflow engine for `freeharness oss run` (new `oss_flow.py`, stage checks in `eval/oss_stage.py`): the default is now six
   stages (setup, hunt, dupcheck, issue, fix, pr), each ONE short prompt on the same dsh session, built from `state.json`, with a
   step budget and a deterministic acceptance check (oss_judge items plus stage checks: a recorded repro run whose output shows the

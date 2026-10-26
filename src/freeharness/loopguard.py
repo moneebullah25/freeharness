@@ -1,8 +1,9 @@
 """
 Loop guard: spot a model that keeps running the SAME tool call and getting the SAME answer.
 
-OFF by default (`--loop-guard` or FREEHARNESS_LOOP_GUARD=1): the root cause of such loops was a model that
-no longer had the data it had already read; until that fix is confirmed live, this must not mask it.
+ON by default (`--no-loop-guard` or FREEHARNESS_LOOP_GUARD=0 turns it off). The root cause of the loops seen
+so far was a model that no longer had the data it had already read (fixed: sticky chats, bounded fresh-chat
+history); the guard only catches what is left, a model that has the data and still repeats itself.
 
 `detect_repeat` is a small pure function; `Watch` feeds it from dsh session events (tool/call + tool/result).
 The harness only ever REPORTS the repeat (and, in the oss engine, ends the turn and asks for a different
@@ -18,9 +19,11 @@ WINDOW = 8                 # look at the last this-many calls ...
 THRESHOLD = 3              # ... and flag one that occurred this many times with the same result
 
 
-def enabled(flag: bool = False) -> bool:
-    """`--loop-guard` or FREEHARNESS_LOOP_GUARD=1/true/yes/on."""
-    return bool(flag) or os.environ.get("FREEHARNESS_LOOP_GUARD", "").strip().lower() in ("1", "true", "yes", "on")
+def enabled(flag: bool = True) -> bool:
+    """On unless `flag` is False (`--no-loop-guard`) or FREEHARNESS_LOOP_GUARD=0/false/no/off."""
+    if os.environ.get("FREEHARNESS_LOOP_GUARD", "").strip().lower() in ("0", "false", "no", "off"):
+        return False
+    return bool(flag)
 
 
 def _args_key(args) -> str:
