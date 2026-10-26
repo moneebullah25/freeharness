@@ -146,6 +146,22 @@ def wrong_value(expected: str, actual: str, body: str) -> str:
     return ""
 
 
+def missing_expected(expected: str, actual: str, body: str) -> str:
+    """A distinctive token of the model's stated EXPECTED (4+ characters, with a digit, absent from its stated ACTUAL) that
+    the run's output lacks. A dropped value shows no traceback and `repr` can hide it (a zero microsecond), so the output
+    proves the failure by missing what was expected. Plain words never count: only number-like tokens."""
+    if not body.strip():
+        return ""
+    act = {w.lower().strip(".-+") for w in _WORD.findall(actual or "")}
+    for w in _WORD.findall(expected or ""):
+        w = w.strip(".-+")
+        if len(w) < 4 or not any(ch.isdigit() for ch in w) or w.lower() in act:
+            continue
+        if not re.search(rf"(?<![\w.]){re.escape(w)}(?![\w.])", body):
+            return w
+    return ""
+
+
 def failure_signal(output: str, expected: str = "", actual: str = "") -> tuple[str, str]:
     """(signal, problem). signal is why this output shows a failure ('' = it does not); problem names an environment
     failure (missing module, command not found...), which is a broken repro, not the bug."""
@@ -157,6 +173,9 @@ def failure_signal(output: str, expected: str = "", actual: str = "") -> tuple[s
     w = wrong_value(expected, actual, body)
     if w:
         return f"the output contains the stated actual value {w!r}", ""
+    m = missing_expected(expected, actual, body)
+    if m:
+        return f"the output lacks the stated expected value {m!r}", ""
     return "", ""
 
 
@@ -177,7 +196,8 @@ def find_repro(stage_calls: list[dict], section: dict | None) -> tuple[list[dict
             continue
         tried += 1
         sig, prob = failure_signal(c.get("text", ""), expected, actual)
-        problem = problem or prob
+        if tried == 1:
+            problem = prob                      # only the latest run: an environment error fixed since is no longer the reason
         if sig:
             repro = {"n": c.get("n"), "command": cmd[:1500], "output": _EXIT.sub("", c.get("text", ""))[:2000],
                      "exit": c.get("exit"), "signal": sig}
@@ -203,7 +223,7 @@ def find_repro(stage_calls: list[dict], section: dict | None) -> tuple[list[dict
                     "no line of the repro's output appears in the candidate section: paste the real output there")
     else:
         rep = _item("repro_in_report", "the repro command's real output is pasted in the candidate section", FAIL,
-                    "no recorded repro run yet" if not repro else "no candidate section in the report yet")
+                    "no repro run recorded yet (see repro_run above)" if not repro else "no candidate section in the report yet")
     return [run, ea, rep], repro
 
 

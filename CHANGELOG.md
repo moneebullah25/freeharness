@@ -14,6 +14,10 @@ releases may include breaking changes; they will be listed under **Changed**.
   (misuse of an API is not a bug). The quote must appear in the cited file or in a tool result of the stage, and `Intent checked:` must name
   a file in the clone: a comment such as "nesting takes precedence" can no longer be skipped without a trace.
 
+- The `oss run` hunt check `repro_run` also accepts a run whose output lacks a number-like value the candidate says was expected (a dropped
+  value shows no traceback), and an environment error (missing module) is reported as the reason only when the latest run had it, not an
+  older one fixed since.
+
 ### Added
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
   label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,

@@ -106,9 +106,23 @@ def test_search_result_rows_are_read_from_the_models_own_gh_search_calls():
     ("ModuleNotFoundError: No module named 'yaml'", "", "", False),   # an environment problem is not the bug
     ("bash: foo: command not found\n[exit code: 127]", "", "", False),
     ("", "x", "y", False),
+    ("datetime.datetime(2020, 2, 15, 12, 34, 23)\n", "datetime.datetime(2020, 2, 15, 12, 34, 23, 999999)", "datetime.datetime(2020, 2, 15, 12, 34, 23, 0)", True),
+    ("3\n", "0 or a clear error", "", False),                      # plain words in Expected are not proof; neither is a missing small number
+    ("x = 999999\n", "999999", "0", False),                         # the expected value is present
 ])
 def test_failure_signal_rules(out, exp, act, sig):
     assert bool(st.failure_signal(out, exp, act)[0]) is sig
+
+
+def test_an_old_environment_error_is_not_the_reason_once_later_runs_are_clean():
+    sec = {"text": "Expected: 12345\nActual: 1"}
+    env = call(1, "python3 r.py", "ModuleNotFoundError: No module named 'x'", 1)
+    clean = call(2, "python3 r.py", "12345\n")                    # runs; shows the expected value, no error
+    items, repro = st.find_repro([env, clean], sec)
+    ev = {i["id"]: i for i in items}["repro_run"]["evidence"]
+    assert repro is None and "environment" not in ev and "2 run(s)" in ev
+    items, repro = st.find_repro([clean, call(3, "python3 r.py", "No module named 'x'", 1)], sec)   # the latest run is the broken one
+    assert "environment" in {i["id"]: i for i in items}["repro_run"]["evidence"]
 
 
 def test_environment_failures_are_named_not_counted():
