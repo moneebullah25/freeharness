@@ -225,6 +225,12 @@ def test_providers_have_no_assumed_prompt_ceiling():
     assert all(p.full_markers for p in PROVIDERS.values())
 
 
+@pytest.fixture(autouse=True)
+def _no_digest_unless_asked(monkeypatch):
+    """The older tests look at compaction alone; the digest tests set DIGEST_TARGET themselves."""
+    monkeypatch.setattr(shim, "DIGEST_TARGET", 10**9)
+
+
 def _assert_compact(prompt, msgs):
     """`prompt` is the compact rendering of `msgs`: older results head+tail with a marker, newest verbatim."""
     tool = [m["content"] for m in msgs if m["role"] == "tool"]
@@ -510,3 +516,54 @@ def test_http_handler_does_not_pretrim_the_history(tmp_path):
     finally:
         srv.shutdown()
         shim.Handler.router = None
+
+
+def _steps(n, result_chars=3000):
+    msgs = [{"role": "system", "content": "be careful"}, {"role": "user", "content": "do the task"}]
+    for i in range(n):
+        msgs.append({"role": "assistant", "content": "", "tool_calls": [
+            {"id": f"c{i}", "type": "function", "function": {"name": "bash", "arguments": json.dumps({"command": f"ls dir{i}"})}}]})
+        msgs.append({"role": "tool", "tool_call_id": f"c{i}", "content": f"result {i} " + "x" * result_chars})
+    msgs.append({"role": "user", "content": "keep going"})
+    return msgs
+
+
+def test_a_fresh_chat_gets_a_digest_of_hundreds_of_steps_and_the_newest_messages_verbatim():
+    msgs = _steps(200)
+    out = shim.digest_history(shim.compact_messages(msgs), TOOLS, 48_000)
+    assert len(shim.render_prompt(msgs, TOOLS)) > 500_000
+    assert len(shim.render_prompt(out, TOOLS)) < 90_000
+    assert out[0] == msgs[0] and out[1] == msgs[1] and out[-1] == msgs[-1]           # system, task and latest user message
+    digest = out[2]["content"]
+    assert digest.startswith("[Earlier steps") and "assistant: bash" in digest and "ls dir5" in digest or "older lines" in digest
+    assert out[-shim.FRESH_KEEP:] == shim.compact_messages(msgs)[-shim.FRESH_KEEP:]
+    firsts = [m for m in out[3:] if m["role"] != "system"]
+    assert firsts[0]["role"] != "tool"                                               # no orphan tool result
+    assert shim.digest_history(out, TOOLS, 48_000) is out                                    # idempotent once it fits
+
+
+def test_a_short_history_is_not_digested():
+    msgs = _steps(5, result_chars=100)
+    assert shim.digest_history(msgs, TOOLS, 48_000) is msgs
+
+
+def test_a_fresh_chat_on_resume_sends_the_digest_not_hundreds_of_messages(monkeypatch):
+    monkeypatch.setattr(shim, "DIGEST_TARGET", 48_000)
+    sess = ScriptSession([("fine", [])])
+    router = make_router("gemini", sess)
+    list(router.run("gemini", "", TOOLS, messages=_steps(150)))
+    assert len(sess.prompts[0]) < 90_000 and "[Earlier steps" in sess.prompts[0]
+
+
+def test_new_chats_per_hour_are_capped_so_an_account_is_never_flooded(monkeypatch):
+    monkeypatch.setattr(shim, "MAX_NEW_CHATS_PER_HOUR", 3)
+    s = ScriptSession()
+    r = make_router("gemini", s, sticky=False)           # every request opens a chat
+    for i in range(3):
+        step(r, "gemini", convo(i))
+    with pytest.raises(shim.ProvidersFailed, match="new chats were started"):
+        step(r, "gemini", convo(3))
+    assert len(s.prompts) == 3
+    r.clock.t += 3601                                    # an hour later there is room again
+    step(r, "gemini", convo(4))
+    assert len(s.prompts) == 4

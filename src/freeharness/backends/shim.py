@@ -230,6 +230,54 @@ def compact_messages(messages: list[dict]) -> list[dict]:
     return out if changed else messages
 
 
+DIGEST_TARGET = int(os.environ.get("FREEHARNESS_DIGEST_TARGET", "48000"))   # a fresh chat's history is digested above this
+FRESH_KEEP = 40            # ... keeping the newest messages verbatim
+DIGEST_LINE = 170          # chars per digested step
+DIGEST_MAX = 18_000        # chars for the whole digest (older steps are only counted beyond this)
+
+
+def _digest_line(m: dict, names: dict) -> str:
+    role = m.get("role")
+    if role == "assistant":
+        calls = [f"{c['function']['name']} {_one_line(c['function'].get('arguments'), 90)}" for c in m.get("tool_calls") or []]
+        return "assistant: " + ("; ".join(calls) or _one_line(_text(m.get("content")), DIGEST_LINE))
+    if role == "tool":
+        return "  -> " + _one_line(_text(m.get("content")), 100)
+    return "user: " + _one_line(_text(m.get("content")), DIGEST_LINE)
+
+
+def _one_line(value, n: int) -> str:
+    t = " ".join((value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)).split())
+    return t if len(t) <= n else t[:n - 1] + "…"
+
+
+def digest_history(messages: list[dict], tools: list[dict] | None, target: int | None = None) -> list[dict]:
+    """A FRESH chat cannot take hundreds of steps: when the compacted history is still over `target` chars, every
+    message between the first user message and the newest FRESH_KEEP is replaced by ONE user message listing what
+    was done (a line per call and result). Nothing in the newest messages changes. Returns `messages` itself when
+    it already fits or is too short to digest."""
+    if len(render_prompt(messages, tools)) <= (DIGEST_TARGET if target is None else target):
+        return messages
+    first = next((i for i, m in enumerate(messages) if m.get("role") == "user"), -1)
+    cut = len(messages) - FRESH_KEEP
+    while cut > first + 1 and messages[cut].get("role") == "tool":       # never start the kept part on an orphan result
+        cut -= 1
+    if first < 0 or cut <= first + 1:
+        return messages
+    lines = [_digest_line(m, {}) for m in messages[first + 1:cut] if m.get("role") in ("assistant", "tool", "user")]
+    omitted = 0
+    while sum(len(x) + 1 for x in lines) > DIGEST_MAX and len(lines) > 2:
+        lines.pop(0)
+        omitted += 1
+    head = ("[Earlier steps of this session, summarized by the harness because this is a new chat; the results are "
+            "cut short, so re-run a command if you need its full output."
+            + (f" {omitted} older lines are left out." if omitted else "") + "]\n")
+    kept = [m for i, m in enumerate(messages) if i <= first or i >= cut or m.get("role") in ("system", "developer")]
+    pos = next(i for i, m in enumerate(kept) if m is messages[first])
+    kept.insert(pos + 1, {"role": "user", "content": head + "\n".join(lines)})
+    return kept
+
+
 def fit_messages(messages: list[dict], tools: list[dict] | None, budget: int | None) -> list[dict]:
     """Shrink an over-long history so render_prompt() fits `budget` chars (None = no limit).
 
@@ -297,6 +345,7 @@ def fit_messages(messages: list[dict], tools: list[dict] | None, budget: int | N
 # Safety nets only, NOT the normal way a chat ends: the normal ways are the site's own "full" notice, a
 # history that no longer matches (compaction / edit), a changed page or session, or an error.
 STICKY_MAX_STEPS = 400         # a chat that has taken this many requests is replaced by a fresh one
+MAX_NEW_CHATS_PER_HOUR = int(os.environ.get("FREEHARNESS_MAX_NEW_CHATS_PER_HOUR", "12"))   # per provider; 0 = no cap
 STICKY_MAX_CHARS = 600_000     # ... or has been sent this many characters in total
 FRESH_TARGET = 0.5             # a fresh chat's prompt aims at this fraction of the limit (when one is known)
 FULL_REPLY_MAX = 1_500         # a "chat is full" notice is short; a longer reply is an answer
@@ -601,6 +650,7 @@ class Router:
         self.limits = limits if limits is not None else Limits()
         self.fault = parse_fault(os.environ.get("FREEHARNESS_FAULT"))   # test hook: {provider: Nth request fails}
         self.requests: dict[str, int] = {}
+        self.new_chats: dict[str, list[float]] = {}     # when each provider's chats were started (the last hour)
         self.debug_prompts = debug_prompts if debug_prompts is not None else os.environ.get("SHIM_DEBUG_PROMPTS")
         self._debug_last: list[str] = []
 
@@ -782,7 +832,7 @@ class Router:
                 return prompt
             budget = self.fresh_budget(key)           # None until a limit has been learned from the site
             if budget not in cache:
-                compact = compact_messages(messages)     # every fresh chat gets the compact history, limit or not
+                compact = digest_history(compact_messages(messages), tools)   # every fresh chat gets a bounded history
                 cache[budget] = render_prompt(fit_messages(compact, tools, budget), tools)
             return cache[budget]
 
@@ -808,6 +858,11 @@ class Router:
                     sess = self._session(key)
                     send, fresh, plan = self._plan(key, sess, lambda k=key: fresh_for(k), messages, tools,
                                                    force_fresh)
+                    if fresh and not self._may_start_chat(key):
+                        last = RuntimeError(f"{prov.label}: {MAX_NEW_CHATS_PER_HOUR} new chats were started in the last "
+                                            "hour; not opening another (an account that makes many chats gets suspended)")
+                        self.log(f"shim: {key} skipped: {last}")
+                        break
                     self.log(f"shim: -> {key} ({len(send):,} chars{'' if fresh else ', same chat'})")
                     self._debug_prompt(key, fresh, send)
                     self.threads.pop(key, None)            # unknown until this request finishes cleanly
@@ -876,6 +931,20 @@ class Router:
         if length_failures and length_failures == len(ready):
             raise PromptTooLarge(f"every provider says the prompt/chat is too long: {last}")
         raise ProvidersFailed(f"all providers failed; last error: {last}")
+
+    def _may_start_chat(self, key: str) -> bool:
+        """Room for one more NEW chat on this site this hour? Counts it when there is. A site that sees dozens of
+        chats an hour from one account can suspend it, so the cap holds even when a request could otherwise go."""
+        if not MAX_NEW_CHATS_PER_HOUR:
+            return True
+        now = self.clock()
+        recent = [t for t in self.new_chats.get(key, []) if now - t < 3600]
+        if len(recent) >= MAX_NEW_CHATS_PER_HOUR:
+            self.new_chats[key] = recent
+            return False
+        recent.append(now)
+        self.new_chats[key] = recent
+        return True
 
     def close(self):
         for s in self.sessions.values():
