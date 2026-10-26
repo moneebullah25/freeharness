@@ -86,7 +86,7 @@ over, the new site gets the whole conversation from the harness's log.
 **older tool results** oldest first: the first 400 and last 200 characters stay, the middle becomes
 `[... 8,214 chars omitted (of 8,814); re-run the command if you need it]`. The newest 5 results, and every result after the last
 assistant message, stay **verbatim** (up to 40,000 characters each). Whole old messages are dropped only if that is still not enough.
-It only runs when a limit is known (below); otherwise the whole history is sent as is.
+This compaction (`compact_messages`) applies to EVERY fresh chat, whatever the provider's limits: a dsh resume, a history mismatch, a new session object, a chat-full signal, or failover to another provider. A 300,000-char history becomes a ~50,000-char first prompt. Only the extra budget trimming (`fit_messages`) waits for a learned limit (below).
 
 **Prompt-size limits are learned, never assumed.** No provider has an assumed ceiling (`max_prompt` is a safety value of 2,000,000
 characters). `<state>/limits.json` records per provider `known_good_chars` (largest message that got a real answer) and, only after a

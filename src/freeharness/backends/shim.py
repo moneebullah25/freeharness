@@ -209,6 +209,27 @@ def _shorten(text: str, head: int, tail: int) -> str:
     return t[:head] + note + t[len(t) - tail:]
 
 
+def compact_messages(messages: list[dict]) -> list[dict]:
+    """The history a FRESH chat is sent, whatever the provider's limits: every tool result except the newest
+    PROTECT_RESULTS (and any after the last assistant message) keeps its first TRIM_HEAD and last TRIM_TAIL chars
+    with an "N chars omitted (of M)" marker; the newest stay verbatim up to PROTECT_CAP chars each. Nothing is
+    dropped and nothing else is touched. Returns `messages` itself when nothing needed shortening."""
+    last_asst = max((i for i, m in enumerate(messages) if m.get("role") == "assistant"), default=-1)
+    results = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+    protected = {i for i in results if i > last_asst} | set(results[-PROTECT_RESULTS:])
+    out, changed = list(messages), False
+    for i in results:
+        old = _text(messages[i].get("content"))
+        if i in protected:
+            new = _shorten(old, PROTECT_CAP * 2 // 3, PROTECT_CAP // 3) if len(old.strip()) > PROTECT_CAP else old
+        else:
+            new = _shorten(old, TRIM_HEAD, TRIM_TAIL)
+        if new != old:
+            out[i] = {**messages[i], "content": new}
+            changed = True
+    return out if changed else messages
+
+
 def fit_messages(messages: list[dict], tools: list[dict] | None, budget: int | None) -> list[dict]:
     """Shrink an over-long history so render_prompt() fits `budget` chars (None = no limit).
 
@@ -757,11 +778,12 @@ class Router:
         cache: dict = {}
 
         def fresh_for(key):
-            budget = self.fresh_budget(key)
-            if messages is None or budget is None:
+            if messages is None:
                 return prompt
+            budget = self.fresh_budget(key)           # None until a limit has been learned from the site
             if budget not in cache:
-                cache[budget] = render_prompt(fit_messages(messages, tools, budget), tools)
+                compact = compact_messages(messages)     # every fresh chat gets the compact history, limit or not
+                cache[budget] = render_prompt(fit_messages(compact, tools, budget), tools)
             return cache[budget]
 
         fits = [k for k in keys if len(fresh_for(k)) <= self.hard_limit(k)]

@@ -225,13 +225,78 @@ def test_providers_have_no_assumed_prompt_ceiling():
     assert all(p.full_markers for p in PROVIDERS.values())
 
 
-def test_a_long_history_is_sent_whole_while_no_limit_is_known():
+def _assert_compact(prompt, msgs):
+    """`prompt` is the compact rendering of `msgs`: older results head+tail with a marker, newest verbatim."""
+    tool = [m["content"] for m in msgs if m["role"] == "tool"]
+    for i, body in enumerate(tool):
+        if i >= len(tool) - shim.PROTECT_RESULTS:
+            assert body in prompt, f"result {i} is among the newest and must be verbatim"
+        else:
+            assert body not in prompt and body[:shim.TRIM_HEAD] in prompt and body[-shim.TRIM_TAIL:] in prompt
+            assert f"of {len(body):,}" in prompt
+    assert "SYSTEM-RULES" in prompt and "LATEST-QUESTION" in prompt and "first ask" in prompt
+
+
+def test_every_fresh_chat_gets_the_compact_history_even_when_no_limit_is_known():
+    """Live: resuming a long session sent a 303,797-char first prompt to a fresh chat."""
     s = ScriptSession()
     r = make_router("deepseek", s, sticky=False)
-    msgs = _long_history(n=40, size=5000)
+    msgs = _long_history(n=60, size=5000)                   # ~300k chars of raw history
     full = shim.render_prompt(msgs, TOOLS)
+    assert len(full) > 290_000
     list(r.run("deepseek", full, messages=msgs, tools=TOOLS))
-    assert s.prompts[0] == full and len(full) > 200_000
+    assert len(s.prompts[0]) < 80_000 and len(s.prompts[0]) < len(full) * 0.3, len(s.prompts[0])
+    _assert_compact(s.prompts[0], msgs)
+    assert s.prompts[0] == shim.render_prompt(shim.compact_messages(msgs), TOOLS)
+
+
+def test_compact_messages_leaves_a_short_history_alone_and_does_not_mutate_the_input():
+    small = _long_history(n=3, size=300)
+    assert shim.compact_messages(small) is small
+    big = _long_history(n=20, size=5000)
+    before = json.dumps(big)
+    out = shim.compact_messages(big)
+    assert json.dumps(big) == before and len(out) == len(big) and out is not big
+
+
+def test_sticky_first_prompt_resume_mismatch_and_full_signal_all_use_the_compact_history():
+    msgs = _long_history(n=60, size=5000)
+    full = shim.render_prompt(msgs, TOOLS)
+    for key in ("gemini", "qwen", "deepseek", "chatgpt"):       # dsh resume: a router with no chat yet
+        s = ScriptSession()
+        list(make_router(key, s).run(key, full, messages=msgs, tools=TOOLS))
+        assert s.fresh_flags == [True] and len(s.prompts[0]) < 80_000
+        _assert_compact(s.prompts[0], msgs)
+    # history-prefix mismatch (dsh compaction / edit) in a running sticky chat
+    s = ScriptSession()
+    r = make_router("deepseek", s)
+    step(r, "deepseek", big_convo(1))
+    edited = big_convo(40, size=5000)
+    edited[1] = {"role": "user", "content": "a DIFFERENT first message"}
+    step(r, "deepseek", edited)
+    assert s.fresh_flags == [True, True] and len(s.prompts[1]) < 0.35 * len(shim.render_prompt(edited, TOOLS_S))
+    # a "chat is full" signal in a long session
+    s = ScriptSession([(CALL_TEXT, [BLOCK]), ("The conversation is too long, start a new chat", []), (CALL_TEXT, [BLOCK])])
+    r = make_router("deepseek", s)
+    step(r, "deepseek", big_convo(40, size=5000))
+    long_conv = big_convo(41, size=5000)
+    step(r, "deepseek", long_conv)
+    assert s.fresh_flags == [True, False, True]
+    assert len(s.prompts[2]) < 0.35 * len(shim.render_prompt(long_conv, TOOLS_S))
+    assert long_conv[-1]["content"] in s.prompts[2], "the newest result is verbatim"
+
+
+def test_failover_to_another_provider_gets_the_compact_history_not_the_raw_one():
+    a, b = ScriptSession([RuntimeError("You've reached your limit (quota)")]), ScriptSession()
+    sess = {"gemini": a, "qwen": b}
+    r = shim.Router(["gemini", "qwen"], lambda prov: sess[prov.key], clock=Clock(), log=lambda m: None,
+                    sticky=["gemini", "qwen"])
+    msgs = _long_history(n=60, size=5000)
+    full = shim.render_prompt(msgs, TOOLS)
+    events = list(r.run("auto", full, messages=msgs, tools=TOOLS))
+    assert ("provider", "qwen") in events and b.fresh_flags == [True]
+    assert len(b.prompts[0]) < 80_000 and len(a.prompts[0]) < 80_000
+    _assert_compact(b.prompts[0], msgs)
 
 
 def test_length_failure_on_a_fresh_chat_is_recorded_and_retried_smaller_then_confirmed_and_persisted(tmp_path):
@@ -244,8 +309,9 @@ def test_length_failure_on_a_fresh_chat_is_recorded_and_retried_smaller_then_con
     events = list(r.run("deepseek", full, messages=msgs, tools=TOOLS))
     assert ("done", [BLOCK]) in events
     first, second = len(s.prompts[0]), len(s.prompts[1])
-    assert first == len(full) and second <= first * 0.5 + 1, (first, second)
-    assert "LATEST-QUESTION" in s.prompts[1] and shim.OMIT_TAG in s.prompts[1] and "SYSTEM-RULES" in s.prompts[1]
+    assert first == len(shim.render_prompt(shim.compact_messages(msgs), TOOLS)) < len(full)
+    assert second <= first * 0.5 + 1, (first, second)
+    assert "LATEST-QUESTION" in s.prompts[1] and "SYSTEM-RULES" in s.prompts[1] and (shim.OMIT_TAG in s.prompts[1] or shim.DROPPED in s.prompts[1])
     snap = lim.snapshot("deepseek")
     assert snap["suspect_max_chars"] == first and snap["confirmed"] is True
     assert snap["known_good_chars"] == second and snap["ceiling_chars"] == int(first * 0.8)
@@ -440,7 +506,7 @@ def test_http_handler_does_not_pretrim_the_history(tmp_path):
         req = urllib.request.Request(base, json.dumps({"model": "gemini", "tools": TOOLS, "messages": msgs}).encode(),
                                      {"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=20).read()
-        assert s.prompts[0] == shim.render_prompt(msgs, TOOLS)
+        assert s.prompts[0] == shim.render_prompt(shim.compact_messages(msgs), TOOLS)
     finally:
         srv.shutdown()
         shim.Handler.router = None
