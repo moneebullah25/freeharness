@@ -885,7 +885,7 @@ class Router:
                         self.log(f"shim: {key} skipped: {last}")
                         break
                     self.log(f"shim: -> {key} ({len(send):,} chars{'' if fresh else ', same chat'})")
-                    self._debug_prompt(key, fresh, send)
+                    self._debug_prompt(key, fresh, framed(prov, send, fresh, tools))     # exactly what is typed into the site
                     th_before = self.threads.get(key)
                     self.threads.pop(key, None)            # unknown until this request finishes cleanly
                     yield ("provider", key)
