@@ -569,7 +569,16 @@ class Session:
         except LookupError:
             self.page.keyboard.press("Enter")   # send button hides on some builds
         except PWError as e:
-            raise TimeoutError(f"could not send the prompt: {str(e)[:160]}") from None
+            # The button was found but could not be clicked (covered by a banner, still animating). Enter sends on every
+            # site we drive; only if the text is still in the composer afterwards is the prompt really unsent.
+            try:
+                box.click(timeout=3_000)
+                self.page.keyboard.press("Enter")
+                self.page.wait_for_timeout(2_000)
+            except PWError:
+                pass
+            if "never sent" in self.page_state():
+                raise TimeoutError(f"could not send the prompt: {str(e)[:400]} {self.page_state()}") from None
 
         # Wait for the new assistant turn to exist.
         answer = self.page.locator(self.p.sel["assistant"][0])
