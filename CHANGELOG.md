@@ -37,6 +37,10 @@ releases may include breaking changes; they will be listed under **Changed**.
 - A "message too long / chat is full" notice on the page now ends the wait for a reply at once (it used to wait the full reply timeout:
   ChatGPT shows the notice and never answers an oversize message).
 
+- A tool call written as `{"tool": "read", "file_path": ...}` (ChatGPT's own variant; the key `tool`, `tool_name` or `function` instead of
+  `name`, arguments beside it) is read as a call when it names a real tool; before, three such calls were dropped and the turn ended as
+  plain text. The shim now also logs a WARNING when a reply mentions `tool_call` but no call could be read from it.
+
 ### Added
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
   label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,

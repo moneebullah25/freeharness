@@ -850,3 +850,21 @@ def test_a_slow_reply_gets_its_http_headers_and_keepalives_long_before_it_is_rea
     finally:
         srv.shutdown()
         shim.Handler.router = None
+
+
+def test_a_call_written_with_a_tool_key_and_flat_arguments_is_read():
+    """MEASURED live 2026-10-28: ChatGPT wrote {"tool": "read", "file_path": ...}: three calls were silently dropped."""
+    text = ('tool_call\n{"tool":"read","file_path":"/w/a.py"}\n\ntool_call\n'
+            '{"tool":"bash","description":"d","command":"ls","timeoutMs":10000}')
+    blocks = ['{"tool":"read","file_path":"/w/a.py"}', '{"tool":"bash","description":"d","command":"ls"}']
+    content, calls = shim.parse_reply(text, blocks, TOOLS)
+    names = [c["function"]["name"] for c in calls]
+    assert content == "" and names == ["read", "bash"]
+    args = json.loads(calls[1]["function"]["arguments"])
+    assert args["command"] == "ls" and "tool" not in args
+    assert json.loads(calls[0]["function"]["arguments"]) == {"file_path": "/w/a.py"}
+
+
+def test_json_with_a_tool_key_naming_something_unknown_is_not_a_call():
+    content, calls = shim.parse_reply('{"tool": "the hammer", "weight": 3}', ['{"tool": "the hammer", "weight": 3}'], TOOLS)
+    assert calls == [] and "hammer" in content

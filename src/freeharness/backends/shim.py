@@ -461,7 +461,13 @@ def _json_objects(text: str):
 
 
 def _as_call(obj, names: dict):
-    """A {"name", "arguments"} object naming a real tool -> (name, args), else None."""
+    """A {"name", "arguments"} object naming a real tool -> (name, args), else None. Models also write the tool under
+    "tool", "tool_name" or "function" (ChatGPT: {"tool": "read", "file_path": ...}); that counts when it names a real tool."""
+    if isinstance(obj, dict) and "name" not in obj:
+        for alias in ("tool", "tool_name", "function"):
+            if isinstance(obj.get(alias), str) and obj[alias].lower() in names:
+                obj = {"name": obj[alias], **{k: v for k, v in obj.items() if k != alias}}
+                break
     if not isinstance(obj, dict) or "name" not in obj:
         return None
     name = names.get(str(obj["name"]).lower())
@@ -1308,6 +1314,9 @@ class Handler(BaseHTTPRequestHandler):
                                              ("provider", "text", "blocks", "streaming"))
         text = text or ""
         content, calls = parse_reply(text, blocks or [], tools)
+        if tools and not calls and "tool_call" in text:
+            self.router.log(f"shim: WARNING {provider}'s reply mentions tool_call but no call could be read from it: "
+                            f"{text.strip()[:200]!r}")
         if provider:
             self.router.note_reply(provider, content, calls)
         if os.environ.get("SHIM_DEBUG"):         # raw replies, for diagnosing a site's markup
