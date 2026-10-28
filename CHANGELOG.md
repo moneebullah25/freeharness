@@ -57,6 +57,13 @@ releases may include breaking changes; they will be listed under **Changed**.
 - A call to a tool that does not exist, written as `{"tool": "shell_exec", "arguments": {...}}`, is handed to dsh like the `name` form
   already was, so the model gets dsh's "Unknown tool" error and can correct itself, instead of the shim dropping it silently.
 
+- Fewer repeated reads (user's idea 2026-10-28). In a CONTINUED chat, a tool result that is byte-identical to one the chat already holds in
+  full is replaced by a one-line pointer ("Same output as your earlier call bash ...: unchanged, already shown in this chat above");
+  a changed result is sent in full, so nothing stale reaches the model. A FRESH chat gets a "State so far" block appended to its first user
+  message (skills loaded, issues read, searches run, pull requests checked, files written, commands, files read), because its older
+  results are cut short and say "re-run the command if you need it", which is what made every new chat re-read the same issues and files.
+  Neither changes what dsh stores or the history fingerprints.
+
 ### Added
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
   label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,

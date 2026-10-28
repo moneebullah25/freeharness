@@ -1,5 +1,6 @@
 """Chat policy of the shim: sticky for every provider, the site's own "chat is full" signals, learned (never
 assumed) prompt limits, compact history for a new chat, SHIM_DEBUG_PROMPTS. Offline: scripted fake sessions."""
+import hashlib
 import json
 import stat
 
@@ -33,6 +34,11 @@ class ScriptSession(FakeSession):
 
     def chat_full(self):
         return self.full
+
+
+def fresh_prompt(msgs, tools):
+    """What a FRESH chat is sent: the compacted history plus the "state so far" block."""
+    return shim.render_prompt(shim.add_state_block(shim.compact_messages(msgs), msgs), tools)
 
 
 def make_router(key, sess, sticky=True, **kw):
@@ -253,7 +259,7 @@ def test_every_fresh_chat_gets_the_compact_history_even_when_no_limit_is_known()
     list(r.run("deepseek", full, messages=msgs, tools=TOOLS))
     assert len(s.prompts[0]) < 80_000 and len(s.prompts[0]) < len(full) * 0.3, len(s.prompts[0])
     _assert_compact(s.prompts[0], msgs)
-    assert s.prompts[0] == shim.render_prompt(shim.compact_messages(msgs), TOOLS)
+    assert s.prompts[0] == fresh_prompt(msgs, TOOLS)
 
 
 def test_compact_messages_leaves_a_short_history_alone_and_does_not_mutate_the_input():
@@ -315,7 +321,7 @@ def test_length_failure_on_a_fresh_chat_is_recorded_and_retried_smaller_then_con
     events = list(r.run("deepseek", full, messages=msgs, tools=TOOLS))
     assert ("done", [BLOCK]) in events
     first, second = len(s.prompts[0]), len(s.prompts[1])
-    assert first == len(shim.render_prompt(shim.compact_messages(msgs), TOOLS)) < len(full)
+    assert first == len(fresh_prompt(msgs, TOOLS)) < len(full)
     assert second <= first * 0.5 + 1, (first, second)
     assert "LATEST-QUESTION" in s.prompts[1] and "SYSTEM-RULES" in s.prompts[1] and (shim.OMIT_TAG in s.prompts[1] or shim.DROPPED in s.prompts[1])
     snap = lim.snapshot("deepseek")
@@ -371,7 +377,7 @@ def test_debug_prompts_keep_the_last_three_full_prompts_owner_only_plus_an_index
         step(r, "gemini", convo(n))
     text = out.read_text()
     assert text.count("===== ") == 3
-    assert shim.render_prompt(convo(4), TOOLS_S) in text and shim.render_prompt(convo(0), TOOLS_S) not in text
+    assert fresh_prompt(convo(4), TOOLS_S) in text and fresh_prompt(convo(0), TOOLS_S) not in text
     assert stat.S_IMODE(out.stat().st_mode) == 0o600
     rows = [json.loads(x) for x in out.with_name(out.name + ".index").read_text().splitlines()]
     assert len(rows) == 5 and rows[0]["provider"] == "gemini" and rows[0]["mode"] == "fresh"
@@ -512,7 +518,7 @@ def test_http_handler_does_not_pretrim_the_history(tmp_path):
         req = urllib.request.Request(base, json.dumps({"model": "gemini", "tools": TOOLS, "messages": msgs}).encode(),
                                      {"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=20).read()
-        assert s.prompts[0] == shim.render_prompt(shim.compact_messages(msgs), TOOLS)
+        assert s.prompts[0] == fresh_prompt(msgs, TOOLS)
     finally:
         srv.shutdown()
         shim.Handler.router = None
@@ -765,3 +771,73 @@ def test_fit_delta_leaves_a_batch_that_fits_alone_and_never_touches_other_messag
     msgs = convo(1)[2:]                                            # assistant call + tool result, small
     names = shim.tool_names(convo(1)[:3])
     assert shim.fit_delta(msgs, TOOLS_S, names, 100_000) == shim.render_delta(msgs, TOOLS_S, names)
+
+
+def _result_msgs(n_rounds, bodies):
+    """The harness's history after n_rounds standard tool calls, with round i's tool result replaced by bodies[i]."""
+    msgs = convo(n_rounds)
+    for i in range(n_rounds):
+        msgs[3 + 2 * i] = dict(msgs[3 + 2 * i], content=bodies[i])
+    return msgs
+
+
+def test_a_repeated_tool_result_the_chat_already_holds_is_replaced_by_a_pointer():
+    """The user's idea 2026-10-28: ChatGPT re-read the same issues and files; each repeat put the same text into the chat again."""
+    s = ScriptSession()
+    r = make_router("gemini", s)
+    same = "LINE-OF-FILE " * 80                                    # > DEDUPE_MIN, identical both times
+    step(r, "gemini", convo(0))
+    step(r, "gemini", _result_msgs(1, [same]))                       # first time: sent in full
+    assert same.strip() in s.prompts[1]
+    step(r, "gemini", _result_msgs(2, [same, same]))                  # the same call again: a pointer, not the text
+    assert same.strip() not in s.prompts[2] and "Same output as your earlier call bash" in s.prompts[2]
+    assert len(s.prompts[2]) < 700
+    step(r, "gemini", _result_msgs(3, [same, same, same + "CHANGED"]))   # a changed result is sent in full
+    assert "CHANGED" in s.prompts[3] and "Same output" not in s.prompts[3]
+    assert s.fresh_flags == [True, False, False, False]               # one chat throughout
+
+
+def test_small_results_and_a_fresh_chat_are_never_deduplicated():
+    s = ScriptSession()
+    r = make_router("gemini", s)
+    step(r, "gemini", convo(0))
+    step(r, "gemini", _result_msgs(1, ["short"]))
+    step(r, "gemini", _result_msgs(2, ["short", "short"]))
+    assert "Same output" not in s.prompts[2] and "short" in s.prompts[2]
+    assert shim.dedupe_results(_result_msgs(1, ["x" * 900])[2:], {}, {}) == _result_msgs(1, ["x" * 900])[2:]
+
+
+def test_dedupe_does_not_touch_the_harnesss_own_messages_or_the_fingerprints():
+    msgs = _result_msgs(2, ["A" * 600, "A" * 600])
+    before = json.dumps(msgs)
+    out = shim.dedupe_results(msgs[4:], shim.tool_calls(msgs), {hashlib.sha256(("A" * 600).encode()).hexdigest(): "bash cat file0.txt"})
+    assert json.dumps(msgs) == before and "Same output" in out[1]["content"]
+
+
+def test_a_fresh_chat_is_told_what_was_already_done():
+    """MEASURED live: every new chat re-listed the issues and re-read the same files, because the older results were cut short."""
+    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "do the hunt"}]
+    steps = [("mcp__gh__gh_issue_read", {"repo": "o/r", "number": 95}, "#95 [open] Fuzzy parse has a problem"),
+             ("mcp__gh__gh_search", {"repo": "o/r", "query": "Dog470", "kind": "prs"}, "0 result(s) for prs 'Dog470'"),
+             ("read", {"file_path": "/w/_parser.py", "offset": 600, "limit": 115}, "x" * 900),
+             ("bash", {"command": "python repro.py", "description": "Run the repro"}, "ParserError: Unknown string format"),
+             ("write", {"file_path": "/w/reports/o_r_issues.md", "content": "c"}, "Created file")]
+    for i, (name, args, res) in enumerate(steps):
+        msgs += [{"role": "assistant", "content": None, "tool_calls": [
+                     {"id": f"c{i}", "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]},
+                 {"role": "tool", "tool_call_id": f"c{i}", "content": res}]
+    block = shim.state_block(msgs)
+    assert "#95 [open] Fuzzy parse" in block and "prs 'Dog470'" in block and "_parser.py lines 600-714" in block
+    assert "Run the repro" in block and "write /w/reports/o_r_issues.md" in block and len(block) <= shim.STATE_CAP + 400
+    out = shim.add_state_block(msgs, msgs)
+    assert out[1]["content"].startswith("do the hunt") and "State so far" in out[1]["content"]
+    assert out[-1] == msgs[-1] and [m["role"] for m in out] == [m["role"] for m in msgs]   # nothing added as a new message
+    assert shim.state_block(msgs[:4]) == "" and shim.add_state_block(msgs[:4], msgs[:4]) == msgs[:4]   # too little history
+
+
+def test_the_state_block_is_in_the_prompt_of_a_fresh_chat():
+    s = ScriptSession()
+    r = make_router("gemini", s)
+    msgs = _result_msgs(5, [f"result {i} " + "y" * 500 for i in range(5)])
+    step(r, "gemini", msgs)
+    assert "State so far" in s.prompts[0] and "bash" in s.prompts[0].split("State so far", 1)[1]

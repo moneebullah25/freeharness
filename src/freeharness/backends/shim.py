@@ -281,6 +281,122 @@ def digest_history(messages: list[dict], tools: list[dict] | None, target: int |
     return kept
 
 
+DEDUPE_MIN = 400           # a tool result shorter than this is always sent again (a pointer would not be shorter)
+STATE_CAP = 3200           # chars for the "state so far" block of a fresh chat
+STATE_MIN_CALLS = 4        # fewer tool calls than this and a fresh chat needs no state block
+
+
+def tool_calls(messages: list[dict]) -> dict:
+    """tool_call id -> (short tool name, arguments as text, parsed arguments)."""
+    out = {}
+    for m in messages:
+        for c in m.get("tool_calls") or []:
+            fn = c.get("function") or {}
+            raw = fn.get("arguments") or "{}"
+            try:
+                parsed = json.loads(raw) if isinstance(raw, str) else dict(raw)
+            except (ValueError, TypeError):
+                parsed = {}
+            out[c.get("id")] = (str(fn.get("name", "?")).split("__")[-1], raw if isinstance(raw, str) else json.dumps(raw),
+                                parsed if isinstance(parsed, dict) else {})
+    return out
+
+
+def _first_line(text: str, n: int = 100) -> str:
+    return _one_line(next((ln for ln in text.splitlines() if ln.strip()), ""), n)
+
+
+def _tail_path(p, keep: int = 3) -> str:
+    """A long absolute path as its last `keep` parts (the workspace prefix says nothing the model needs)."""
+    parts = [x for x in str(p).replace("\\", "/").split("/") if x]
+    return str(p) if len(str(p)) <= 60 or len(parts) <= keep else ".../" + "/".join(parts[-keep:])
+
+
+def state_block(messages: list[dict]) -> str:
+    """What the session has ALREADY done, from its tool calls: for a fresh chat, whose older results are cut short and tell
+    the model to 're-run the command', so it does not read the same issues and files all over again (MEASURED live
+    2026-10-28: every new chat re-listed the issues and re-read the same four). '' when there is too little history."""
+    calls = tool_calls(messages)
+    results = {m.get("tool_call_id"): _text(m.get("content")) for m in messages if m.get("role") == "tool"}
+    if len(calls) < STATE_MIN_CALLS:
+        return ""
+    sec = {k: [] for k in ("skills", "issues", "searches", "prs", "wrote", "files", "commands", "other")}
+    for cid, (name, _, a) in calls.items():
+        res = results.get(cid, "")
+        if name == "skill":
+            sec["skills"].append(str(a.get("name", "?")))
+        elif name == "gh_issue_read":
+            sec["issues"].append(_first_line(res, 110) or f"#{a.get('number')}")
+        elif name == "gh_list_issues":
+            sec["issues"].append(f"listed open issues labelled {a.get('label', '?')!r}: {_first_line(res, 60)}")
+        elif name == "gh_search":
+            hits = re.match(r"(\d+) result", res.strip())
+            sec["searches"].append(f"{a.get('kind', '?')} {_one_line(a.get('query'), 45)!r} -> "
+                                   f"{hits.group(1) + ' hits' if hits else _first_line(res, 30)}")
+        elif name in ("gh_list_pr_files", "gh_pr_threads"):
+            sec["prs"].append(f"{name} #{a.get('number')}: {_first_line(res, 70)}")
+        elif name in ("write", "edit"):
+            sec["wrote"].append(f"{name} {_tail_path(a.get('file_path', '?'))}")
+        elif name == "read":
+            rng = f" lines {a.get('offset', 1)}-{int(a.get('offset', 1)) + int(a['limit']) - 1}" if a.get("limit") else ""
+            sec["files"].append(f"{_tail_path(a.get('file_path', '?'))}{rng}")
+        elif name in ("grep", "glob"):
+            sec["files"].append(f"{name} {_one_line(a.get('pattern', ''), 45)} in {_tail_path(a.get('path', ''), 2)}")
+        elif name == "bash":
+            sec["commands"].append(_one_line(a.get("description") or a.get("command") or "", 110))
+        elif name.startswith("gh_"):
+            sec["other"].append(f"{name} {_one_line(json.dumps(a, ensure_ascii=False), 70)}")
+    titles = {"skills": "skills loaded", "issues": "issues read / listed", "searches": "GitHub searches run",
+              "prs": "pull requests checked", "wrote": "files written or edited", "other": "other GitHub steps",
+              "commands": "commands run (latest last)", "files": "files read or searched"}
+    out, budget = [], STATE_CAP
+    for key in ("skills", "issues", "searches", "prs", "wrote", "other", "commands", "files"):
+        items = list(dict.fromkeys(sec[key]))
+        if not items:
+            continue
+        keep = items[-12:] if key in ("commands", "files") else items[:24]
+        line = f"- {titles[key]}: " + " | ".join(keep) + (f" (+{len(items) - len(keep)} more)" if len(items) > len(keep) else "")
+        out.append(line[:max(budget, 200)])
+        budget -= len(out[-1]) + 1
+    return ("[State so far: the harness lists what earlier chats of this task ALREADY did. Do not repeat these; the files "
+            "and reports they wrote are on disk, so read those instead of repeating the work.]\n" + "\n".join(out)) if out else ""
+
+
+def add_state_block(messages: list[dict], source: list[dict]) -> list[dict]:
+    """`messages` with the state of `source` appended to the FIRST user message (so it is never mistaken for the newest
+    request). Returns `messages` itself when there is nothing to add."""
+    block = state_block(source)
+    first = next((i for i, m in enumerate(messages) if m.get("role") == "user"), -1)
+    if not block or first < 0:
+        return messages
+    out = list(messages)
+    out[first] = {**messages[first], "content": _text(messages[first].get("content")).rstrip() + "\n\n" + block}
+    return out
+
+
+def dedupe_results(new_messages: list[dict], calls: dict, seen: dict) -> list[dict]:
+    """The tool results the chat has not seen yet, with every result that is BYTE-IDENTICAL to one this chat already
+    holds (in `seen`: result hash -> label of the earlier call) or to an earlier one in the same batch replaced by a one-line
+    pointer. A result that changed is sent in full, so nothing stale can reach the model."""
+    batch, out, changed = {}, [], False
+    for m in new_messages:
+        if m.get("role") != "tool":
+            out.append(m)
+            continue
+        text = _text(m.get("content")).strip()
+        h = hashlib.sha256(text.encode()).hexdigest()
+        label = seen.get(h) or batch.get(h)
+        if len(text) >= DEDUPE_MIN and label:
+            out.append({**m, "content": f"[Same output as your earlier call {label}: unchanged, already shown in this chat "
+                                        "above, so it is not repeated.]"})
+            changed = True
+        else:
+            out.append(m)
+            nm, raw, _ = calls.get(m.get("tool_call_id"), ("tool", "", {}))
+            batch.setdefault(h, f"{nm} {_one_line(raw, 70)}")
+    return out if changed else new_messages
+
+
 def fit_messages(messages: list[dict], tools: list[dict] | None, budget: int | None) -> list[dict]:
     """Shrink an over-long history so render_prompt() fits `budget` chars (None = no limit).
 
@@ -840,14 +956,15 @@ class Router:
         delta = ""
         if why is None:
             names, limit = tool_names(messages[:k + 1]), int(self.hard_limit(key) * 0.9)
-            delta = fit_delta(messages[k + 1:], tools, names, limit)     # shortened tool results, same chat
+            fresh_msgs = dedupe_results(messages[k + 1:], tool_calls(messages), th.get("seen", {}))   # repeats -> a pointer
+            delta = fit_delta(fresh_msgs, tools, names, limit)           # shortened tool results, same chat
             if len(delta) > limit:
                 why = "new messages bigger than the provider's limit"
         if why is not None:
             if th:
                 self.log(f"shim: {key} chat not continued ({why}); starting a new one with a compact history")
             return fresh_prompt(), True, {"fresh": True}
-        return delta, False, {"fresh": False, "steps": th["steps"], "chars": th["chars"]}
+        return delta, False, {"fresh": False, "steps": th["steps"], "chars": th["chars"], "k": k, "seen": th.get("seen", {})}
 
     def _orphan(self, key, sess, messages, tools, send_chars, plan, th_before, orp):
         """The client dropped a sticky request after the message went in: remember the chat so the same request,
@@ -860,12 +977,22 @@ class Router:
                              "th": th_before, "t": self.clock()}
         self.log(f"shim: {key} request dropped by the client; its chat is kept so a retry resumes it (no new chat)")
 
-    def _remember(self, key, sess, messages, tools, sent_chars, plan):
+    def _remember(self, key, sess, messages, tools, sent_chars, plan, sent_text=""):
         """Record what this chat has seen (the reply fingerprint arrives later via note_reply)."""
         carried = plan if plan and not plan["fresh"] else {}     # counts of the chat being continued
+        seen = dict(carried.get("seen", {}))                      # tool results this chat holds IN FULL (hash -> call label)
+        if sent_text:
+            calls = tool_calls(messages)
+            for m in messages[carried["k"] + 1 if "k" in carried else 0:]:
+                if m.get("role") != "tool":
+                    continue
+                text = _text(m.get("content")).strip()
+                if len(text) >= DEDUPE_MIN and text in sent_text:
+                    nm, raw, _ = calls.get(m.get("tool_call_id"), ("tool", "", {}))
+                    seen.setdefault(hashlib.sha256(text.encode()).hexdigest(), f"{nm} {_one_line(raw, 70)}")
         self.threads[key] = {
             "session": sess, "url": getattr(sess, "current_url", lambda: None)(), "k": len(messages),
-            "prefix_fp": history_fingerprint(messages, tools), "reply_fp": None,
+            "prefix_fp": history_fingerprint(messages, tools), "reply_fp": None, "seen": seen,
             "steps": carried.get("steps", 0) + 1, "chars": carried.get("chars", 0) + sent_chars}
 
     def note_reply(self, key, content, calls):
@@ -919,6 +1046,7 @@ class Router:
             budget = self.fresh_budget(key)           # None until a limit has been learned from the site
             if budget not in cache:
                 compact = digest_history(compact_messages(messages), tools)   # every fresh chat gets a bounded history
+                compact = add_state_block(compact, messages)                  # ... and what was already done
                 cache[budget] = render_prompt(fit_messages(compact, tools, budget), tools)
             return cache[budget]
 
@@ -1021,7 +1149,7 @@ class Router:
                         if page_full:
                             self.log(f"shim: {key} shows its chat-full notice; the next request starts a new chat")
                         else:
-                            self._remember(key, sess, messages, tools, send_chars, plan)
+                            self._remember(key, sess, messages, tools, send_chars, plan, send)
                     yield ("done", blocks)
                     return
                 except GeneratorExit:
