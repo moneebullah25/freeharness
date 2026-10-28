@@ -402,6 +402,34 @@ def render_delta(new_messages: list[dict], tools: list[dict] | None, names: dict
     return "# New messages\n" + "\n\n".join(convo) + "\n\n" + remind
 
 
+def fit_delta(new_messages: list[dict], tools: list[dict] | None, names: dict, limit: int) -> str:
+    """render_delta() shortened to fit ONE site message of `limit` chars. The tool results the chat has not seen lose their
+    middle (the same "N chars omitted" marker as an older result), all to the same cap, the biggest first; nothing else
+    is touched. This keeps the chat going where a bigger-than-the-site-takes batch (six file reads at once) would have
+    made the router start a new chat, or dsh condense the history in yet another one."""
+    delta = render_delta(new_messages, tools, names)
+    if len(delta) <= limit:
+        return delta
+    msgs = [dict(m) for m in new_messages]
+    idx = [i for i, m in enumerate(msgs) if m.get("role") == "tool"]
+    if not idx:
+        return delta
+    sizes = [len(_text(msgs[i].get("content"))) for i in idx]
+    overhead = len(delta) - sum(sizes)
+    lo, hi = 300, max(sizes)
+    while lo < hi:                                  # the biggest common cap that still fits
+        mid = (lo + hi + 1) // 2
+        if overhead + sum(min(n, mid) + (90 if n > mid else 0) for n in sizes) <= limit:
+            lo = mid
+        else:
+            hi = mid - 1
+    for i in idx:
+        old = _text(msgs[i].get("content"))
+        if len(old.strip()) > lo:
+            msgs[i]["content"] = _shorten(old, lo * 2 // 3, lo // 3)
+    return render_delta(msgs, tools, names)
+
+
 def framed(prov, text: str, fresh: bool, tools) -> str:
     """What is typed into the site: `text` with the provider's own note on where the tools live (only when tools are
     offered and the provider has one). The router's bookkeeping keeps using `text`, so the sticky prefix is unchanged."""
@@ -809,8 +837,9 @@ class Router:
         why = next((name for name, test in checks if not test()), None)
         delta = ""
         if why is None:
-            delta = render_delta(messages[k + 1:], tools, tool_names(messages[:k + 1]))
-            if len(delta) > self.hard_limit(key) * 0.9:
+            names, limit = tool_names(messages[:k + 1]), int(self.hard_limit(key) * 0.9)
+            delta = fit_delta(messages[k + 1:], tools, names, limit)     # shortened tool results, same chat
+            if len(delta) > limit:
                 why = "new messages bigger than the provider's limit"
         if why is not None:
             if th:
@@ -889,7 +918,10 @@ class Router:
                 cache[budget] = render_prompt(fit_messages(compact, tools, budget), tools)
             return cache[budget]
 
-        fits = [k for k in keys if len(fresh_for(k)) <= self.hard_limit(k)]
+        def can_continue(k):         # a chat that can take the new messages needs no fresh prompt that fits
+            return messages is not None and k in self.sticky and (k in self.threads or k in self.orphans)
+
+        fits = [k for k in keys if can_continue(k) or len(fresh_for(k)) <= self.hard_limit(k)]
         if not fits:
             raise PromptTooLarge(
                 f"prompt is {min(len(fresh_for(k)) for k in keys):,} chars even after trimming; "
@@ -930,6 +962,13 @@ class Router:
                                                    force_fresh)
                     adopting = bool(plan and plan.get("adopt"))
                     orp = plan["adopt"] if adopting else None
+                    if fresh and len(send) > self.hard_limit(key):
+                        # the chat could not be continued (history changed...) and a fresh one does not fit either
+                        last = PromptTooLarge(f"prompt is {len(send):,} chars even after trimming; {key}'s limit is "
+                                              f"{self.hard_limit(key):,}")
+                        length_failures += 1
+                        self.log(f"shim: {key} skipped: {last}")
+                        break
                     if fresh and not self._may_start_chat(key):
                         last = RuntimeError(f"{prov.label}: {MAX_NEW_CHATS_PER_HOUR} new chats were started in the last "
                                             "hour; not opening another (an account that makes many chats gets suspended)")
@@ -1314,7 +1353,10 @@ class Handler(BaseHTTPRequestHandler):
                                              ("provider", "text", "blocks", "streaming"))
         text = text or ""
         content, calls = parse_reply(text, blocks or [], tools)
-        if tools and not calls and "tool_call" in text:
+        if tools and not calls and "tool_call" in text and "```tool_call" not in text and '{"name"' not in text \
+                and '"tool"' not in text:
+            pass                        # prose that merely mentions the word (a dsh compaction summary, an explanation)
+        elif tools and not calls and "tool_call" in text:
             self.router.log(f"shim: WARNING {provider}'s reply mentions tool_call but no call could be read from it: "
                             f"{text.strip()[:200]!r}")
         if provider:

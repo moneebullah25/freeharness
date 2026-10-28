@@ -45,6 +45,11 @@ releases may include breaking changes; they will be listed under **Changed**.
   requests"...) and fails at once with the notice in the message; a timeout now reports the page's notices and last reply (300 chars), and
   the shim's failure log line keeps 600 chars instead of 160.
 
+- A batch of tool results that is bigger than ONE message the site takes (six file reads at once, past ChatGPT's learned limit) is shortened
+  to fit and sent in the SAME chat (`fit_delta`: the biggest results lose their middle, the start and end stay). Before, the shim answered
+  400 "too large", dsh condensed the history in another new chat, and the run went on in a third. A chat that can continue also no longer needs a
+  fresh prompt that fits. dsh's compaction summaries no longer trigger the "unreadable tool_call" warning.
+
 ### Added
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
   label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,

@@ -744,3 +744,24 @@ def test_without_a_chat_to_resume_a_cooling_provider_still_fails_at_once():
     r.until["gemini"] = r.clock() + 100
     with pytest.raises(shim.AllCoolingDown):
         step(r, "gemini", convo(0))
+
+
+def test_a_batch_of_tool_results_bigger_than_one_site_message_is_shortened_not_a_reason_for_a_new_chat():
+    """MEASURED live 2026-10-28: six file reads (48k chars) went past ChatGPT's learned per-message limit: a 400, dsh condensed
+    the history in another new chat."""
+    s = ScriptSession()
+    r = make_router("gemini", s)
+    r.hard_limit = lambda key: 12_000
+    step(r, "gemini", convo(0))
+    big = convo(1)
+    big[-1] = dict(big[-1], content="HEAD-" + "x" * 30_000 + "-TAIL")
+    step(r, "gemini", big)
+    assert s.fresh_flags == [True, False]                          # the same chat
+    assert len(s.prompts[1]) <= 12_000 and "chars omitted" in s.prompts[1]
+    assert "HEAD-" in s.prompts[1] and "-TAIL" in s.prompts[1]     # the start and the end of the result are kept
+
+
+def test_fit_delta_leaves_a_batch_that_fits_alone_and_never_touches_other_messages():
+    msgs = convo(1)[2:]                                            # assistant call + tool result, small
+    names = shim.tool_names(convo(1)[:3])
+    assert shim.fit_delta(msgs, TOOLS_S, names, 100_000) == shim.render_delta(msgs, TOOLS_S, names)
