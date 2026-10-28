@@ -1032,7 +1032,7 @@ class Router:
                                 continue
                     kind = "error" if length else classify(e)
                     length_failures += 1 if length else 0
-                    self.log(f"shim: {key} failed ({kind}): {str(e)[:160]}")
+                    self.log(f"shim: {key} failed ({kind}): {str(e)[:600]}")
                     self._cool(key, kind, e)
                     last = e
                     break

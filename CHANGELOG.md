@@ -41,6 +41,10 @@ releases may include breaking changes; they will be listed under **Changed**.
   `name`, arguments beside it) is read as a call when it names a real tool; before, three such calls were dropped and the turn ended as
   plain text. The shim now also logs a WARNING when a reply mentions `tool_call` but no call could be read from it.
 
+- While waiting for a reply to start, the bridge also looks for the provider's own error/limit notices ("you've reached our limit", "too many
+  requests"...) and fails at once with the notice in the message; a timeout now reports the page's notices and last reply (300 chars), and
+  the shim's failure log line keeps 600 chars instead of 160.
+
 ### Added
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
   label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,

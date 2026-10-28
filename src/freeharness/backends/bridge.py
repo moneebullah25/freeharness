@@ -620,6 +620,9 @@ class Session:
                 if self.chat_full():          # the site refused the message with a notice and will never answer it
                     raise RuntimeError(f"{self.p.label} says the message is too long or the chat is full "
                                        "(a notice on the page, no reply started)")
+                shown = self.page_notice(self.p.errors)
+                if shown:                     # a limit / "try again later" notice: waiting longer will not produce a reply
+                    raise RuntimeError(f"{self.p.label} shows a notice and no reply started: {shown!r}")
             if time.monotonic() > deadline:
                 raise TimeoutError(
                     f"no reply started within {self.p.reply_timeout}s. "
@@ -672,12 +675,9 @@ class Session:
                     f"({len(sent)} chars streamed)")
             time.sleep(POLL)
 
-    def chat_full(self) -> bool:
-        """True if the page shows the site's own "this chat is full / too long" notice (the provider's
-        `full_markers`). Looks only at alert-like elements and the last reply, never at the whole page: the
-        conversation itself (tool output, file contents) may legitimately contain those words."""
-        if not self.p.full_markers:
-            return False
+    def _notice_text(self) -> str:
+        """Lower-cased text of the page's alert-like elements and its last reply (never the whole page: the conversation
+        itself, tool output and file contents, may legitimately contain any words)."""
         js = """(css) => {
             const sel = "[role=alert],[role=status],[aria-live=assertive],[class*=toast i],[class*=banner i],"
                       + "[class*=notice i],[class*=warning i],[class*=error i],[class*=limit i],[data-sonner-toast]";
@@ -687,10 +687,22 @@ class Session:
             return out.join("\\n");
         }"""
         try:
-            text = (self.page.evaluate(js, self.p.sel["assistant"][0]) or "").lower()
+            return (self.page.evaluate(js, self.p.sel["assistant"][0]) or "").lower()
         except PWError:
+            return ""
+
+    def chat_full(self) -> bool:
+        """True if the page shows the site's own "this chat is full / too long" notice (the provider's
+        `full_markers`)."""
+        if not self.p.full_markers:
             return False
+        text = self._notice_text()
         return any(m in text for m in self.p.full_markers)
+
+    def page_notice(self, markers) -> str:
+        """The first of `markers` (lower-case) that the page's notices show, else ''."""
+        text = self._notice_text() if markers else ""
+        return next((m for m in markers if m in text), "")
 
     def page_state(self) -> str:
         """What the page actually shows, for an error that would otherwise guess.
@@ -719,6 +731,9 @@ class Session:
                     break
             turns = self.page.locator(self.p.sel["assistant"][0]).count()
             bits.append(f"{turns} assistant turn(s) on the page")
+            notice = " ".join(self._notice_text().split())[:300]
+            if notice:
+                bits.append(f"notices/last reply: {notice!r}")
         except PWError as e:
             bits.append(f"could not inspect the page: {str(e)[:80]}")
         return "Page state: " + "; ".join(bits) + "."

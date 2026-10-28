@@ -402,3 +402,23 @@ def test_a_too_long_notice_on_the_page_ends_the_wait_for_a_reply_at_once():
     with pytest.raises(RuntimeError, match="too long or the chat is full"):
         list(s._collect(0))
     assert time.monotonic() - t0 < 10
+
+
+def test_a_limit_notice_on_the_page_ends_the_wait_for_a_reply_with_the_notice_in_the_error():
+    class Loc:
+        def count(self):
+            return 0
+        last = first = property(lambda self: self)
+
+    class Page:
+        def locator(self, css):
+            return Loc()
+    s = object.__new__(bridge.Session)
+    s.p = bridge.CHATGPT
+    s.page = Page()
+    s._challenged = lambda: False
+    s.chat_full = lambda: False
+    s.page_notice = lambda markers: "you've reached our limit"
+    s._streaming = lambda: False
+    with pytest.raises(RuntimeError, match="shows a notice and no reply started: \"you've reached our limit\""):
+        list(s._collect(0))
