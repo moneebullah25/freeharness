@@ -19,9 +19,10 @@
         baseURL: http://127.0.0.1:8766/v1
         # dsh drops a request that sends no bytes for 300s (its default). The shim holds a sticky chat's reply until it is
         # complete, so a slow site (ChatGPT thinking 5 minutes) looked dead: dsh cut the request, the shim forgot the chat
-        # and the retry opened a NEW one (MEASURED 2026-10-28, 301s after the request). 900s is above the shim's own
-        # worst case per request (240s to start + 240s to finish); the shim still bounds every wait.
-        streamIdleTimeoutMs: 900000
+        # and the retry opened a NEW one (MEASURED 2026-10-28, 301s after the request). 1500s is above the shim's own
+        # worst case per request (ChatGPT: 600s to start + 420s to finish, plus a cooldown it waits out in place); the
+        # shim still bounds every wait.
+        streamIdleTimeoutMs: 1500000
         retryPolicy:
           mode: normal
           maxRetries: 2

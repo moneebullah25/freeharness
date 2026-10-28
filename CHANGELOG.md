@@ -25,7 +25,10 @@ releases may include breaking changes; they will be listed under **Changed**.
 - A sticky request that the client drops while the site is still answering (dsh gives up on a silent request) no longer costs a new
   chat: the shim keeps the chat (the site's answer is not stopped), and when the same request comes back it takes over the answer
   already on the page (`Session.adopt`); if nothing arrived it sends the message again in the SAME chat. dsh's own idle limit for the
-  bridge provider is now 900s instead of 300s (`streamIdleTimeoutMs`). The prompt debug log records what is typed into the site.
+  bridge provider is now 1500s instead of 300s (`streamIdleTimeoutMs`). The prompt debug log records what is typed into the site.
+  A reply that never starts ("no reply started within Ns") leaves the message in its chat the same way, and a cooldown of at most 300s is
+  waited out in place when the request has a chat to resume (dsh retries at once and would otherwise fail the stage). ChatGPT waits up
+  to 600s for a reply to start (it thinks first) and 420s for it to finish.
 
 ### Added
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a

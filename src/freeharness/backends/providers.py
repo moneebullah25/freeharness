@@ -101,8 +101,9 @@ CHATGPT = Provider(
     channel="chrome",           # its own profile (profiles/chatgpt), signed in with `freeharness login chatgpt`
     verified=True,
     tool_preamble=CHATGPT_TOOL_PREAMBLE, tool_reminder=CHATGPT_TOOL_REMINDER,
-    # MEASURED 2026-10-28: after 6 quick tool replies a 7k-char tool result got no reply start in 90s (auto mode thinks first)
-    reply_timeout=240, answer_timeout=240,
+    # MEASURED 2026-10-28: auto mode thinks before it answers: 90s was too short for a 7k-char tool result, and 240s
+    # for a 1.7k-char one; some replies took 5+ minutes to appear.
+    reply_timeout=600, answer_timeout=420,
     errors=("something went wrong", "you've reached our limit", "too many requests",
             "please try again later", "unusual activity", "conversation is too long"),
     full_markers=("maximum length for this conversation", "conversation is too long",

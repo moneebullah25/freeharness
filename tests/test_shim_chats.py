@@ -718,3 +718,29 @@ def test_a_different_request_after_a_dropped_one_does_not_adopt_it():
     _dropped_request(r, convo(1))
     step(r, "gemini", convo(0))                                      # not the dropped request
     assert s.adopted == [] and not r.orphans
+
+
+def test_a_reply_that_never_starts_is_waited_for_in_the_same_chat_after_the_cooldown():
+    """MEASURED live 2026-10-28: ChatGPT gave no reply start in 240s; dsh retried at once, got 'cooling down' and failed the
+    stage. Now the message stays in its chat and the retry waits out the short cooldown, then takes over the answer."""
+    s = AdoptSession()
+    r = make_router("gemini", s)
+    waited = []
+    r.wait = lambda sec: (waited.append(sec), setattr(r.clock, "t", r.clock.t + sec))
+    step(r, "gemini", convo(0))
+    s.script = [TimeoutError("no reply started within 240s. Page state: url=https://site.test/c/1; composer holds 0 chars")]
+    with pytest.raises(shim.ProvidersFailed):
+        step(r, "gemini", convo(1))
+    assert "gemini" in r.orphans
+    events, calls = step(r, "gemini", convo(1))                       # dsh retries at once
+    assert sum(waited) > 60 and s.adopted == [3]                      # it waited out the cooldown, then adopted
+    assert len(s.prompts) == 2 and s.fresh_flags == [True, False] and calls   # nothing was typed again, no new chat
+
+
+def test_without_a_chat_to_resume_a_cooling_provider_still_fails_at_once():
+    s = ScriptSession()
+    r = make_router("gemini", s)
+    r.wait = lambda sec: pytest.fail("must not wait")
+    r.until["gemini"] = r.clock() + 100
+    with pytest.raises(shim.AllCoolingDown):
+        step(r, "gemini", convo(0))

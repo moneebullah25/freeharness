@@ -53,6 +53,7 @@ from .providers import ELIGIBLE, PROVIDERS, Provider, resolve
 
 MAX_BODY = 8_000_000
 ORPHAN_SECONDS = 1800      # how long a dropped request's chat stays adoptable
+COOL_WAIT = 300            # a cooldown this short (seconds) is waited out in place when the request has a chat to resume
 
 # ------------------------------------------------------------------ prompting
 
@@ -655,6 +656,7 @@ class Router:
         # Providers allowed to continue ONE chat across requests (send only what is new).
         self.sticky = set(sticky)
         self.threads: dict[str, dict] = {}     # provider -> what its current chat has seen
+        self.wait = time.sleep                 # injectable: tests advance a fake clock instead
         self.orphans: dict[str, dict] = {}     # provider -> a request the client dropped while the site was still answering
         self.limits = limits if limits is not None else Limits()
         self.fault = parse_fault(os.environ.get("FREEHARNESS_FAULT"))   # test hook: {provider: Nth request fails}
@@ -887,7 +889,21 @@ class Router:
                 f"the largest limit among {keys} is {max(self.hard_limit(k) for k in keys):,}")
         ready = [k for k in fits if self.until.get(k, 0) <= now]
         if not ready:
-            raise AllCoolingDown(min(self.until.get(k, now) for k in fits) - now)
+            wait = min(self.until.get(k, now) for k in fits) - now
+            if wait > COOL_WAIT or not any(k in self.orphans for k in fits):
+                raise AllCoolingDown(wait)
+            # dsh retries at once and gives up after two tries; this request has a chat to resume, so wait the cooldown
+            # out here (dsh allows 900s of silence) instead of failing the stage and opening a new chat
+            self.log(f"shim: every provider is cooling down; waiting {wait:.0f}s to resume the chat that is already open")
+            end = self.clock() + wait
+            while self.clock() < end:
+                if should_stop and should_stop():
+                    return
+                self.wait(min(1.0, end - self.clock()))
+            now = self.clock()
+            ready = [k for k in fits if self.until.get(k, 0) <= now]
+            if not ready:
+                raise AllCoolingDown(min(self.until.get(k, now) for k in fits) - now)
 
         last = None
         length_failures = 0
@@ -974,6 +990,9 @@ class Router:
                     if started:
                         raise                      # output already left: cannot fail over
                     self.threads.pop(key, None)
+                    if asked and hold and isinstance(e, TimeoutError) and "no reply started" in str(e):
+                        # the message is in the chat and the site is just slow: the retry waits for that answer
+                        self._orphan(key, sess, messages, tools, send_chars, plan, th_before, orp)
                     site_full = sess is not None and self._page_full(sess)
                     length = self._length_looking(prov, e) or site_full
                     if (not fresh and not same_retry and th_before is not None and not length
