@@ -817,3 +817,36 @@ def test_deepseek_dsml_markup_is_a_call():
     assert [(c["function"]["name"], json.loads(c["function"]["arguments"])) for c in calls] == [("bash", {"command": "echo hi"})]
     _, calls = shim.parse_reply(one.replace('name="bash"', 'name="nope"'), [], TOOLS_S)
     assert calls == []
+
+
+def test_a_slow_reply_gets_its_http_headers_and_keepalives_long_before_it_is_ready(monkeypatch):
+    """MEASURED live 2026-10-28: with tools the shim sent no headers until the reply was ready, and dsh's HTTP client gave up at 300s."""
+    monkeypatch.setattr(shim, "PING_SECONDS", 0.3)
+
+    class SlowSession(FakeSession):
+        def ask(self, prompt, fresh=True, should_stop=None):
+            time.sleep(1.6)
+            yield from super().ask(prompt, fresh, should_stop)
+
+    s = SlowSession(reply="```tool_call\n" + BLOCK + "\n```", blocks=[BLOCK])
+    shim.Handler.router = sticky_router(s)
+    shim.Handler.worker = shim.Worker()
+    threading.Thread(target=shim.Handler.worker.run_forever, daemon=True).start()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), shim.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}/v1/chat/completions"
+    req = urllib.request.Request(base, json.dumps({"model": "gemini", "messages": convo(0), "tools": TOOLS_S,
+                                                   "stream": True}).encode(), {"Content-Type": "application/json"})
+    try:
+        t0 = time.monotonic()
+        with urllib.request.urlopen(req) as r:
+            headers_after = time.monotonic() - t0
+            body = r.read().decode()
+        assert headers_after < 1.0, headers_after                        # headers came while the reply was still being produced
+        assert ": keepalive" in body and "[DONE]" in body
+        events = [json.loads(ln[6:]) for ln in body.splitlines() if ln.startswith("data: {")]
+        calls = [c for e in events for ch in e["choices"] for c in ch["delta"].get("tool_calls", [])]
+        assert any(c.get("function", {}).get("name") == "bash" for c in calls)   # and the tool call still arrives intact
+    finally:
+        srv.shutdown()
+        shim.Handler.router = None

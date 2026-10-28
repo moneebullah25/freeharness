@@ -53,6 +53,7 @@ from .providers import ELIGIBLE, PROVIDERS, Provider, resolve
 
 MAX_BODY = 8_000_000
 ORPHAN_SECONDS = 1800      # how long a dropped request's chat stays adoptable
+PING_SECONDS = 15          # a request still waiting for its reply gets its HTTP headers and an SSE comment this often
 COOL_WAIT = 300            # a cooldown this short (seconds) is waited out in place when the request has a chat to resume
 
 # ------------------------------------------------------------------ prompting
@@ -1106,9 +1107,10 @@ def _client_gone(sock) -> bool:
         return True
 
 
-def stream_from_worker(worker: Worker, make_gen, sock=None):
+def stream_from_worker(worker: Worker, make_gen, sock=None, ping=None):
     """Iterate a generator that runs on the worker thread. Leaving early, or the
-    client disconnecting, sets `cancel`, which the generator is polling."""
+    client disconnecting, sets `cancel`, which the generator is polling. With `ping`, a ("ping", None) event is
+    yielded whenever that many seconds pass with nothing to deliver (the caller keeps the connection alive)."""
     out: queue.Queue = queue.Queue()
     cancel = threading.Event()
 
@@ -1128,6 +1130,7 @@ def stream_from_worker(worker: Worker, make_gen, sock=None):
                 gen.close()
 
     worker.jobs.put(job)
+    quiet = time.monotonic()
     try:
         while True:
             try:
@@ -1135,7 +1138,11 @@ def stream_from_worker(worker: Worker, make_gen, sock=None):
             except queue.Empty:
                 if sock is not None and _client_gone(sock):
                     raise BrokenPipeError("client went away") from None
+                if ping and time.monotonic() - quiet >= ping:
+                    quiet = time.monotonic()
+                    yield ("ping", None)
                 continue
+            quiet = time.monotonic()
             if kind == "ev":
                 yield val
             elif kind == "end":
@@ -1268,7 +1275,7 @@ class Handler(BaseHTTPRequestHandler):
             events = stream_from_worker(
                 self.worker, lambda stop: self.router.run(model, prompt, should_stop=stop,
                                                           messages=messages, tools=tools),
-                self.connection)
+                self.connection, ping=PING_SECONDS if stream else None)
             self._drive(model, stream, want_usage, prompt, tools, events)
         except KeyError:
             self._error(404, "invalid_request_error", f"unknown model {model!r}", "model_not_found")
@@ -1292,7 +1299,7 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             raise
         except Exception as e:                 # noqa: BLE001
-            if not st.get("streaming"):
+            if not st.get("streaming") and not st.get("began"):
                 raise                          # nothing sent yet: do_POST maps it to a status
             self.wfile.write(_sse({"error": {"message": str(e), "type": "server_error"}}))
             self.wfile.flush()
@@ -1329,8 +1336,19 @@ class Handler(BaseHTTPRequestHandler):
                         self.wfile.flush()
             elif kind == "done":
                 st["blocks"] = val
+            elif kind == "ping":
+                # A Node HTTP client gives up on a response whose headers have not come after 300s (MEASURED 2026-10-28:
+                # the drop came at 301s), and a held reply sends none. Send them now, then a comment line (ignored by SSE
+                # parsers) so the connection is never silent.
+                self._begin_sse()
+                self.wfile.write(b": keepalive\n\n")
+                self.wfile.flush()
+                st["began"] = True
 
     def _begin_sse(self):
+        if getattr(self, "_sse_begun", False):
+            return
+        self._sse_begun = True
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")

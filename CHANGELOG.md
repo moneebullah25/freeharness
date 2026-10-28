@@ -30,6 +30,10 @@ releases may include breaking changes; they will be listed under **Changed**.
   waited out in place when the request has a chat to resume (dsh retries at once and would otherwise fail the stage). ChatGPT waits up
   to 600s for a reply to start (it thinks first) and 420s for it to finish.
 
+- ROOT CAUSE of the dropped requests: with tools the shim held the whole HTTP response until the reply was ready, and dsh's HTTP client gives
+  up on a response without headers after 300s (the drops came at 301s). A request still waiting after 15s now gets its headers and an SSE
+  keepalive comment (`: keepalive`) every 15s; fast replies are unchanged. Checked against real dsh (tests/test_shim_dsh_keepalive.py).
+
 ### Added
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
   label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,
