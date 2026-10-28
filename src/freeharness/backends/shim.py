@@ -589,6 +589,8 @@ def parse_reply(text: str, code_blocks: list[str], tools: list[dict] | None):
         # tool" error result lets the model correct itself instead of the turn ending silently.
         for block in code_blocks:
             for obj, _ in _json_objects(block):
+                if isinstance(obj, dict) and "name" not in obj and isinstance(obj.get("tool"), str):
+                    obj = {"name": obj["tool"], **{k: v for k, v in obj.items() if k != "tool"}}   # {"tool": "shell_exec", ...}
                 if (isinstance(obj, dict) and isinstance(obj.get("name"), str) and obj["name"].strip()
                         and isinstance(obj.get("arguments"), dict) and set(obj) <= {"name", "arguments"}):
                     calls.append((obj["name"].strip(), obj["arguments"]))

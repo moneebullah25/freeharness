@@ -868,3 +868,14 @@ def test_a_call_written_with_a_tool_key_and_flat_arguments_is_read():
 def test_json_with_a_tool_key_naming_something_unknown_is_not_a_call():
     content, calls = shim.parse_reply('{"tool": "the hammer", "weight": 3}', ['{"tool": "the hammer", "weight": 3}'], TOOLS)
     assert calls == [] and "hammer" in content
+
+
+def test_a_made_up_tool_in_the_tool_key_shape_goes_to_dsh_so_the_model_hears_that_it_failed():
+    """MEASURED live 2026-10-28: ChatGPT called {"tool": "shell_exec", "arguments": {...}} (the tool is `bash`): the shim dropped it
+    silently, so ChatGPT never learned its call had failed. dsh answers an unknown tool with an error the model can act on."""
+    block = '{"tool": "shell_exec", "arguments": {"command": "ls"}}'
+    content, calls = shim.parse_reply("tool_call\n" + block, [block], TOOLS)
+    assert [c["function"]["name"] for c in calls] == ["shell_exec"] and content == ""
+    assert json.loads(calls[0]["function"]["arguments"]) == {"command": "ls"}
+    # prose that merely has a "tool" key is not forwarded
+    assert shim.parse_reply('{"tool": "hammer", "weight": 3}', ['{"tool": "hammer", "weight": 3}'], TOOLS)[1] == []

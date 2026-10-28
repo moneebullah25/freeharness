@@ -54,6 +54,9 @@ releases may include breaking changes; they will be listed under **Changed**.
   turns of a long chat in the page, so the count stayed put while a complete reply was there, and the shim waited the full 600s ("no reply
   started") and then failed the stage. The dropped-request resume (`adopt`) uses the same check.
 
+- A call to a tool that does not exist, written as `{"tool": "shell_exec", "arguments": {...}}`, is handed to dsh like the `name` form
+  already was, so the model gets dsh's "Unknown tool" error and can correct itself, instead of the shim dropping it silently.
+
 ### Added
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
   label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,
