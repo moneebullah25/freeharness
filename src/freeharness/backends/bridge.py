@@ -325,6 +325,8 @@ class Session:
     # holds an exclusive lock on user_data_dir, so a second agent or bridge on
     # the same .profile dies here — and an AttributeError in close() would then
     # mask the one error the human actually needs to read.
+    keep_generating = False         # True: a request that is dropped does NOT stop the site's answer (the shim adopts it)
+    last_before = 0                 # assistant turns on the page when the last message was sent
     owns_browser = True
     owns_driver = True              # False when a shared Playwright driver was passed in
     _pw = ctx = page = None
@@ -580,13 +582,34 @@ class Session:
             if "never sent" in self.page_state():
                 raise TimeoutError(f"could not send the prompt: {str(e)[:400]} {self.page_state()}") from None
 
+        self.last_before = before
+        yield from self._collect(before, should_stop)
+
+    def adoptable(self, before: int) -> bool:
+        """Did the chat this page is on already start (or finish) the answer to a message sent when it held `before`
+        assistant turns? Used to take over an answer whose request was dropped, instead of asking again."""
+        try:
+            return self.page.locator(self.p.sel["assistant"][0]).count() > before or self._streaming()
+        except PWError:
+            return False
+
+    def adopt(self, before: int, should_stop=None):
+        """Same events as ask(), for an answer that is already on (or still arriving on) the page: nothing is typed."""
+        try:
+            self.page.bring_to_front()
+        except PWError:
+            pass
+        yield from self._collect(before, should_stop)
+
+    def _collect(self, before: int, should_stop=None):
         # Wait for the new assistant turn to exist.
         answer = self.page.locator(self.p.sel["assistant"][0])
         deadline = time.monotonic() + self.p.reply_timeout
         next_check = time.monotonic() + 2
         while answer.count() <= before:
             if should_stop and should_stop():
-                self.stop_generation()
+                if not self.keep_generating:        # the shim keeps a sticky chat's answer so the retry can adopt it
+                    self.stop_generation()
                 return
             if time.monotonic() > next_check:           # a verification page never produces an answer
                 next_check = time.monotonic() + 2
@@ -627,7 +650,8 @@ class Session:
                 last_change = time.monotonic()
 
             if should_stop and should_stop():
-                self.stop_generation()
+                if not self.keep_generating:        # the shim keeps a sticky chat's answer so the retry can adopt it
+                    self.stop_generation()
                 return
             idle = time.monotonic() - last_change
             if not self._streaming() and idle > IDLE_SETTLE and sent:

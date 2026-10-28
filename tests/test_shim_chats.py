@@ -551,7 +551,7 @@ def test_a_fresh_chat_on_resume_sends_the_digest_not_hundreds_of_messages(monkey
     monkeypatch.setattr(shim, "DIGEST_TARGET", 48_000)
     sess = ScriptSession([("fine", [])])
     router = make_router("gemini", sess)
-    list(router.run("gemini", "", TOOLS, messages=_steps(150)))
+    list(router.run("gemini", "", messages=_steps(150), tools=TOOLS))
     assert len(sess.prompts[0]) < 90_000 and "[Earlier steps" in sess.prompts[0]
 
 
@@ -662,3 +662,59 @@ def test_chatgpt_is_told_where_its_tools_live_and_the_other_sites_are_not():
     step(make_router("gemini", g), "gemini", convo(0))
     assert not g.prompts[0].startswith("IMPORTANT CONTEXT") and "user's own computer" not in g.prompts[0]
     assert shim.framed(PROVIDERS["chatgpt"], "x", True, None) == "x"             # no tools offered: nothing added
+
+
+class AdoptSession(ScriptSession):
+    """A page that kept answering after the client left: adopt() hands over what is already there."""
+    last_before = 3
+
+    def __init__(self, script=()):
+        super().__init__(script)
+        self.adopted, self.can_adopt = [], True
+
+    def adoptable(self, before):
+        return self.can_adopt
+
+    def adopt(self, before, should_stop=None):
+        self.adopted.append(before)
+        self.blocks = [BLOCK]
+        yield {"t": CALL_TEXT}
+
+
+def _dropped_request(r, messages):
+    """A request whose client leaves (dsh's idle timeout) while the site is still answering."""
+    prompt = shim.render_prompt(messages, TOOLS_S)
+    return list(r.run("gemini", prompt, should_stop=lambda: True, messages=messages, tools=TOOLS_S))
+
+
+def test_a_dropped_request_is_adopted_by_its_retry_in_the_same_chat_and_never_opens_a_new_one():
+    """MEASURED live 2026-10-28: dsh cut a request after 300s of silence; the retry opened a new ChatGPT chat."""
+    s = AdoptSession()
+    r = make_router("gemini", s)
+    step(r, "gemini", convo(0))                                      # the chat exists
+    assert _dropped_request(r, convo(1)) == [("provider", "gemini")]  # nothing was delivered to the client
+    assert "gemini" in r.orphans and "gemini" not in r.threads
+    events, calls = step(r, "gemini", convo(1))                      # dsh retries the same request
+    assert s.adopted == [3] and len(s.prompts) == 2 and s.fresh_flags == [True, False]   # nothing was typed again
+    assert calls and "gemini" in r.threads and not r.orphans         # the chat carries on
+    events, calls = step(r, "gemini", convo(2))                      # and the next step is a normal continued message
+    assert s.fresh_flags == [True, False, False]
+
+
+def test_a_dropped_request_with_no_answer_on_the_page_is_sent_again_in_the_same_chat():
+    s = AdoptSession()
+    r = make_router("gemini", s)
+    step(r, "gemini", convo(0))
+    _dropped_request(r, convo(1))
+    s.can_adopt = False
+    step(r, "gemini", convo(1))
+    assert s.adopted == [] and s.fresh_flags == [True, False, False]   # sent once more, still the same chat
+
+
+def test_a_different_request_after_a_dropped_one_does_not_adopt_it():
+    s = AdoptSession()
+    r = make_router("gemini", s)
+    step(r, "gemini", convo(0))
+    _dropped_request(r, convo(1))
+    step(r, "gemini", convo(0))                                      # not the dropped request
+    assert s.adopted == [] and not r.orphans

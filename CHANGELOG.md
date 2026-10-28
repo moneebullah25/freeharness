@@ -22,6 +22,11 @@ releases may include breaking changes; they will be listed under **Changed**.
   the user's own machine through the harness. Without it ChatGPT answered "the gh_* tools aren't exposed in the current tool interface"
   and called nothing (new `Provider.tool_preamble` / `tool_reminder`; no other provider's prompt changes).
 
+- A sticky request that the client drops while the site is still answering (dsh gives up on a silent request) no longer costs a new
+  chat: the shim keeps the chat (the site's answer is not stopped), and when the same request comes back it takes over the answer
+  already on the page (`Session.adopt`); if nothing arrived it sends the message again in the SAME chat. dsh's own idle limit for the
+  bridge provider is now 900s instead of 300s (`streamIdleTimeoutMs`). The prompt debug log records what is typed into the site.
+
 ### Added
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
   label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,

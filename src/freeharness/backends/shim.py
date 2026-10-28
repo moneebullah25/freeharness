@@ -52,6 +52,7 @@ from .limits import default_path as limits_path
 from .providers import ELIGIBLE, PROVIDERS, Provider, resolve
 
 MAX_BODY = 8_000_000
+ORPHAN_SECONDS = 1800      # how long a dropped request's chat stays adoptable
 
 # ------------------------------------------------------------------ prompting
 
@@ -654,6 +655,7 @@ class Router:
         # Providers allowed to continue ONE chat across requests (send only what is new).
         self.sticky = set(sticky)
         self.threads: dict[str, dict] = {}     # provider -> what its current chat has seen
+        self.orphans: dict[str, dict] = {}     # provider -> a request the client dropped while the site was still answering
         self.limits = limits if limits is not None else Limits()
         self.fault = parse_fault(os.environ.get("FREEHARNESS_FAULT"))   # test hook: {provider: Nth request fails}
         self.requests: dict[str, int] = {}
@@ -765,7 +767,20 @@ class Router:
             return fresh_prompt(), True, None
         th = self.threads.get(key)
         if force_fresh:
+            self.orphans.pop(key, None)
             return fresh_prompt(), True, {"fresh": True}
+        orp = self.orphans.pop(key, None)
+        if orp:
+            # The client dropped this very request (dsh gave up waiting) while the site kept answering in the chat. If the
+            # same request is back and the page is still on that chat, take over the answer instead of opening a new chat.
+            same = (orp["session"] is sess and self.clock() - orp["t"] < ORPHAN_SECONDS
+                    and history_fingerprint(messages, tools) == orp["fp"]
+                    and getattr(sess, "current_url", lambda: None)() == orp["url"])
+            if same and hasattr(sess, "adopt") and sess.adoptable(orp["before"]):
+                return "", False, {"adopt": orp}
+            if same and orp["th"] is not None:
+                th = self.threads[key] = orp["th"]          # nothing arrived on the page: say it again in the SAME chat
+                self.log(f"shim: {key} resuming the previous chat; the dropped message left no answer, sending it again")
         url = getattr(sess, "current_url", lambda: None)()
         k = th["k"] if th else 0
         checks = [
@@ -793,6 +808,15 @@ class Router:
                 self.log(f"shim: {key} chat not continued ({why}); starting a new one with a compact history")
             return fresh_prompt(), True, {"fresh": True}
         return delta, False, {"fresh": False, "steps": th["steps"], "chars": th["chars"]}
+
+    def _orphan(self, key, sess, messages, tools, send_chars, plan, th_before, orp):
+        """The client dropped a sticky request after the message went in: remember the chat so the same request,
+        when it comes back, takes over the answer on the page instead of starting a new chat."""
+        before = orp["before"] if orp else getattr(sess, "last_before", 0)
+        self.orphans[key] = {"session": sess, "url": getattr(sess, "current_url", lambda: None)(), "before": before,
+                             "fp": history_fingerprint(messages, tools), "send_chars": send_chars, "plan": plan,
+                             "th": th_before, "t": self.clock()}
+        self.log(f"shim: {key} request dropped by the client; its chat is kept so a retry resumes it (no new chat)")
 
     def _remember(self, key, sess, messages, tools, sent_chars, plan):
         """Record what this chat has seen (the reply fingerprint arrives later via note_reply)."""
@@ -875,18 +899,28 @@ class Router:
             fresh, send, plan = True, "", None
             same_retry = False
             for attempt in (0, 1, 2):
+                asked = adopting = hold = False
+                orp, send_chars = None, 0
                 try:
                     sess = self._session(key)
                     send, fresh, plan = self._plan(key, sess, lambda k=key: fresh_for(k), messages, tools,
                                                    force_fresh)
+                    adopting = bool(plan and plan.get("adopt"))
+                    orp = plan["adopt"] if adopting else None
                     if fresh and not self._may_start_chat(key):
                         last = RuntimeError(f"{prov.label}: {MAX_NEW_CHATS_PER_HOUR} new chats were started in the last "
                                             "hour; not opening another (an account that makes many chats gets suspended)")
                         self.log(f"shim: {key} skipped: {last}")
                         break
-                    self.log(f"shim: -> {key} ({len(send):,} chars{'' if fresh else ', same chat'})")
-                    self._debug_prompt(key, fresh, framed(prov, send, fresh, tools))     # exactly what is typed into the site
-                    th_before = self.threads.get(key)
+                    if adopting:
+                        send, send_chars, plan = "", orp["send_chars"], orp["plan"]
+                        self.log(f"shim: {key} resuming the previous chat: taking over the answer already on its page "
+                                 "(the client dropped the request) instead of opening a new chat")
+                    else:
+                        send_chars = len(send)
+                        self.log(f"shim: -> {key} ({len(send):,} chars{'' if fresh else ', same chat'})")
+                        self._debug_prompt(key, fresh, framed(prov, send, fresh, tools))     # exactly what is typed into the site
+                    th_before = orp["th"] if adopting else self.threads.get(key)
                     self.threads.pop(key, None)            # unknown until this request finishes cleanly
                     yield ("provider", key)
                     self.requests[key] = self.requests.get(key, 0) + 1
@@ -894,18 +928,25 @@ class Router:
                         raise RuntimeError("You've reached your limit (injected quota fault)")
                     hold = key in self.sticky and messages is not None    # a "chat is full" reply is discarded
                     held, text = [], ""
-                    for ev in sess.ask(framed(prov, send, fresh, tools), fresh=fresh, should_stop=should_stop):
+                    sess.keep_generating = hold          # a dropped sticky request leaves the site's answer to be adopted
+                    asked = True
+                    answer = (sess.adopt(orp["before"], should_stop) if adopting else
+                              sess.ask(framed(prov, send, fresh, tools), fresh=fresh, should_stop=should_stop))
+                    for ev in answer:
                         text = text + ev["t"] if "t" in ev else ev["reset"]
                         if hold:
                             held.append(ev)
                         else:
                             started = True
                             yield ("t", ev["t"]) if "t" in ev else ("reset", ev["reset"])
+                    if hold and should_stop and should_stop():       # the client left: keep the chat for its retry
+                        self._orphan(key, sess, messages, tools, send_chars, plan, th_before, orp)
+                        return
                     blocks = sess.code_blocks()
                     if self._reply_says_full(prov, text, blocks):
                         raise SiteFull(f"{prov.label} says the chat is full or the message too long: "
                                        f"{text.strip()[:120]!r}")
-                    self.limits.good(key, len(send))
+                    self.limits.good(key, send_chars)
                     page_full = key in self.sticky and self._page_full(sess)
                     for ev in held:
                         started = True
@@ -914,11 +955,14 @@ class Router:
                         if page_full:
                             self.log(f"shim: {key} shows its chat-full notice; the next request starts a new chat")
                         else:
-                            self._remember(key, sess, messages, tools, len(send), plan)
+                            self._remember(key, sess, messages, tools, send_chars, plan)
                     yield ("done", blocks)
                     return
                 except GeneratorExit:
-                    self.threads.pop(key, None)            # partial reply: that chat can no longer be trusted
+                    self.threads.pop(key, None)            # partial reply: that chat can no longer be trusted ...
+                    if asked and hold:                     # ... as a continuation, but a retry of this request can adopt it
+                        self._orphan(key, sess, messages, tools, send_chars, plan, th_before, orp)
+                        raise
                     stop = getattr(sess, "stop_generation", None)
                     if stop:                       # the consumer left: stop burning free-tier quota
                         try:
