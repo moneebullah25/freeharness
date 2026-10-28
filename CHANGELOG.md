@@ -18,6 +18,10 @@ releases may include breaking changes; they will be listed under **Changed**.
   value shows no traceback), and an environment error (missing module) is reported as the reason only when the latest run had it, not an
   older one fixed since.
 
+- ChatGPT is now told, before the first message of a chat (and by a one-line reminder on later ones), that the tools are real and run on
+  the user's own machine through the harness. Without it ChatGPT answered "the gh_* tools aren't exposed in the current tool interface"
+  and called nothing (new `Provider.tool_preamble` / `tool_reminder`; no other provider's prompt changes).
+
 ### Added
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
   label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,

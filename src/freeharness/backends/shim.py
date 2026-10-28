@@ -399,6 +399,13 @@ def render_delta(new_messages: list[dict], tools: list[dict] | None, names: dict
     return "# New messages\n" + "\n\n".join(convo) + "\n\n" + remind
 
 
+def framed(prov, text: str, fresh: bool, tools) -> str:
+    """What is typed into the site: `text` with the provider's own note on where the tools live (only when tools are
+    offered and the provider has one). The router's bookkeeping keeps using `text`, so the sticky prefix is unchanged."""
+    note = (prov.tool_preamble if fresh else prov.tool_reminder) if tools else ""
+    return f"{note}\n\n{text}" if note else text
+
+
 def tool_names(messages: list[dict]) -> dict:
     return {c["id"]: c["function"]["name"] for m in messages if m.get("role") == "assistant"
             for c in m.get("tool_calls") or []}
@@ -887,7 +894,7 @@ class Router:
                         raise RuntimeError("You've reached your limit (injected quota fault)")
                     hold = key in self.sticky and messages is not None    # a "chat is full" reply is discarded
                     held, text = [], ""
-                    for ev in sess.ask(send, fresh=fresh, should_stop=should_stop):
+                    for ev in sess.ask(framed(prov, send, fresh, tools), fresh=fresh, should_stop=should_stop):
                         text = text + ev["t"] if "t" in ev else ev["reset"]
                         if hold:
                             held.append(ev)

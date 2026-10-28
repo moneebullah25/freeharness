@@ -645,3 +645,20 @@ def test_a_vague_error_twice_then_opens_a_new_chat_with_the_compact_history():
     step(r, "gemini", convo(0))
     step(r, "gemini", convo(1))
     assert s.fresh_flags == [True, False, False, True]
+
+
+def test_chatgpt_is_told_where_its_tools_live_and_the_other_sites_are_not():
+    """MEASURED live: ChatGPT said 'the gh_* tools aren't exposed in the current tool interface' and called nothing."""
+    pre, rem = PROVIDERS["chatgpt"].tool_preamble, PROVIDERS["chatgpt"].tool_reminder
+    assert "user's own computer" in pre and "tool_call" in pre and "Do not say that you lack access" in pre and rem
+    sess = ScriptSession()
+    r = shim.Router(["chatgpt"], lambda prov: sess, clock=Clock(), log=lambda m: None, sticky=["chatgpt"])
+    step(r, "chatgpt", convo(0))
+    step(r, "chatgpt", convo(1))
+    assert sess.prompts[0].startswith(pre) and sess.fresh_flags[0] is True        # the first message of the chat
+    assert sess.prompts[1].startswith(rem) and sess.fresh_flags[1] is False       # a continued one: the short reminder
+    assert not sess.prompts[1].startswith(pre)
+    g = ScriptSession()
+    step(make_router("gemini", g), "gemini", convo(0))
+    assert not g.prompts[0].startswith("IMPORTANT CONTEXT") and "user's own computer" not in g.prompts[0]
+    assert shim.framed(PROVIDERS["chatgpt"], "x", True, None) == "x"             # no tools offered: nothing added

@@ -53,6 +53,9 @@ class Provider:
                                     # and starts a new one with a compact history. Wording is from memory
                                     # of each site and UNVERIFIED until seen live (docs/PROVIDERS.md).
     transient_errors: tuple = ()    # site errors that mean "try again" (never "full"): one retry in the SAME chat
+    tool_preamble: str = ""         # text put before the FIRST prompt of a chat when tools are offered, for a site whose
+                                    # model insists it has no tools (it only looks at its own tool interface)
+    tool_reminder: str = ""         # the same, one line, before each later message of that chat
     size_errors: tuple = ()         # generic-looking site errors known to mean "prompt too big" for this
                                     # site (a measured one); treated like a length signal
     consent: tuple = ()             # buttons to click away after load (best effort)
@@ -77,12 +80,27 @@ class Provider:
         return self.strip.sub("", text, count=1) if self.strip else text
 
 
+# MEASURED 2026-10-28 (visible window, signed in): without this ChatGPT answered "the required skill and gh_* tools
+# aren't exposed in the current tool interface" three times and called nothing. It is told where the tools live.
+CHATGPT_TOOL_PREAMBLE = (
+    "IMPORTANT CONTEXT. You are not being asked to use ChatGPT's own built-in tools. You are the reasoning engine of a "
+    "coding agent that runs on the user's own computer. The user has installed a harness there with real tools (a shell, "
+    "file read/edit, GitHub tools named gh_*, skills), listed below. They are NOT in your own tool interface, which is why "
+    "you cannot see them there: you use them by writing a `tool_call` code block as plain text in your reply. The harness "
+    "on the user's machine reads that block, runs the tool, and sends you the result as the next message. The user "
+    "owns this environment and has authorised every tool listed. Do not say that you lack access or that the tools are "
+    "not exposed: if you do not write the block, nothing happens and the task fails.")
+CHATGPT_TOOL_REMINDER = (
+    "Reminder: the tools are real and run on the user's local machine through the harness; call them by writing "
+    "`tool_call` blocks as described at the start of this chat. Do not say you lack access.")
+
 CHATGPT = Provider(
     key="chatgpt", label="ChatGPT", url="https://chatgpt.com/",
     new_url="https://chatgpt.com/?model=auto",
     headless_ok=False,          # Cloudflare challenges headless even when logged in (2026-10-25): a visible window
     channel="chrome",           # its own profile (profiles/chatgpt), signed in with `freeharness login chatgpt`
     verified=True,
+    tool_preamble=CHATGPT_TOOL_PREAMBLE, tool_reminder=CHATGPT_TOOL_REMINDER,
     errors=("something went wrong", "you've reached our limit", "too many requests",
             "please try again later", "unusual activity", "conversation is too long"),
     full_markers=("maximum length for this conversation", "conversation is too long",
