@@ -8,6 +8,9 @@ Everything below it is deterministic, so it gets a real test.
 """
 import json
 import urllib.request
+import time
+
+import pytest
 
 from freeharness.backends import bridge
 
@@ -377,3 +380,25 @@ def test_landing_on_the_sign_in_page_is_a_login_error_not_a_changed_ui():
     assert shim.classify(e.value) == "login" and "freeharness login deepseek" in str(e.value)
     s.page.url = "https://chat.deepseek.com/a/chat/s/1"
     s._raise_if_logged_out()                                   # a normal chat page: nothing raised
+
+
+def test_a_too_long_notice_on_the_page_ends_the_wait_for_a_reply_at_once():
+    """MEASURED live 2026-10-28: ChatGPT showed 'message too long' and never replied; the shim waited the full 600s."""
+    class Loc:
+        def count(self):
+            return 0
+        last = first = property(lambda self: self)
+
+    class Page:
+        def locator(self, css):
+            return Loc()
+    s = object.__new__(bridge.Session)
+    s.p = bridge.CHATGPT
+    s.page = Page()
+    s._challenged = lambda: False
+    s.chat_full = lambda: True
+    s._streaming = lambda: False
+    t0 = time.monotonic()
+    with pytest.raises(RuntimeError, match="too long or the chat is full"):
+        list(s._collect(0))
+    assert time.monotonic() - t0 < 10

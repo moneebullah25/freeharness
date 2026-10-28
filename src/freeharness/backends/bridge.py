@@ -617,6 +617,9 @@ class Session:
                     raise RuntimeError(
                         f"{self.p.label} showed a human-verification challenge after the prompt "
                         f"was sent. Complete it yourself with `freeharness login {self.p.key}`.")
+                if self.chat_full():          # the site refused the message with a notice and will never answer it
+                    raise RuntimeError(f"{self.p.label} says the message is too long or the chat is full "
+                                       "(a notice on the page, no reply started)")
             if time.monotonic() > deadline:
                 raise TimeoutError(
                     f"no reply started within {self.p.reply_timeout}s. "

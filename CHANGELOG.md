@@ -34,6 +34,9 @@ releases may include breaking changes; they will be listed under **Changed**.
   up on a response without headers after 300s (the drops came at 301s). A request still waiting after 15s now gets its headers and an SSE
   keepalive comment (`: keepalive`) every 15s; fast replies are unchanged. Checked against real dsh (tests/test_shim_dsh_keepalive.py).
 
+- A "message too long / chat is full" notice on the page now ends the wait for a reply at once (it used to wait the full reply timeout:
+  ChatGPT shows the notice and never answers an oversize message).
+
 ### Added
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
   label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,
