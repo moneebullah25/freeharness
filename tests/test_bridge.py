@@ -422,3 +422,31 @@ def test_a_limit_notice_on_the_page_ends_the_wait_for_a_reply_with_the_notice_in
     s._streaming = lambda: False
     with pytest.raises(RuntimeError, match="shows a notice and no reply started: \"you've reached our limit\""):
         list(s._collect(0))
+
+
+def test_a_new_reply_is_seen_even_when_a_long_chat_page_keeps_the_assistant_turn_count_constant():
+    """MEASURED live 2026-10-28: ChatGPT's page held 5 assistant turns before AND after a complete reply; the shim saw 'no
+    reply' for 600s because it only compared the count."""
+    state = {"text": "old reply"}
+
+    class Loc:
+        def count(self):
+            return 5
+        last = property(lambda self: self)
+
+        def inner_text(self):
+            return state["text"]
+
+    class Page:
+        def locator(self, css):
+            return Loc()
+    s = object.__new__(bridge.Session)
+    s.p = bridge.CHATGPT
+    s.page = Page()
+    assert s._last_text() == "old reply"
+    assert s._reply_started(5, "old reply") is False       # nothing new yet
+    state["text"] = "The searches have found two potentially relevant open PRs"
+    assert s._reply_started(5, "old reply") is True        # same count, a different newest turn
+    assert s._reply_started(5, None) is False              # without the old text only the count counts (as before)
+    s._streaming = lambda: False
+    assert s.adoptable(5, "old reply") is True

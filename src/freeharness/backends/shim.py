@@ -813,7 +813,7 @@ class Router:
             same = (orp["session"] is sess and self.clock() - orp["t"] < ORPHAN_SECONDS
                     and history_fingerprint(messages, tools) == orp["fp"]
                     and getattr(sess, "current_url", lambda: None)() == orp["url"])
-            if same and hasattr(sess, "adopt") and sess.adoptable(orp["before"]):
+            if same and hasattr(sess, "adopt") and sess.adoptable(orp["before"], orp.get("before_text")):
                 return "", False, {"adopt": orp}
             if same and orp["th"] is not None:
                 th = self.threads[key] = orp["th"]          # nothing arrived on the page: say it again in the SAME chat
@@ -851,7 +851,9 @@ class Router:
         """The client dropped a sticky request after the message went in: remember the chat so the same request,
         when it comes back, takes over the answer on the page instead of starting a new chat."""
         before = orp["before"] if orp else getattr(sess, "last_before", 0)
+        before_text = orp.get("before_text") if orp else getattr(sess, "last_before_text", None)
         self.orphans[key] = {"session": sess, "url": getattr(sess, "current_url", lambda: None)(), "before": before,
+                             "before_text": before_text,
                              "fp": history_fingerprint(messages, tools), "send_chars": send_chars, "plan": plan,
                              "th": th_before, "t": self.clock()}
         self.log(f"shim: {key} request dropped by the client; its chat is kept so a retry resumes it (no new chat)")
@@ -992,7 +994,7 @@ class Router:
                     held, text = [], ""
                     sess.keep_generating = hold          # a dropped sticky request leaves the site's answer to be adopted
                     asked = True
-                    answer = (sess.adopt(orp["before"], should_stop) if adopting else
+                    answer = (sess.adopt(orp["before"], should_stop, orp.get("before_text")) if adopting else
                               sess.ask(framed(prov, send, fresh, tools), fresh=fresh, should_stop=should_stop))
                     for ev in answer:
                         text = text + ev["t"] if "t" in ev else ev["reset"]

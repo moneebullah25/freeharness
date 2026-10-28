@@ -672,10 +672,10 @@ class AdoptSession(ScriptSession):
         super().__init__(script)
         self.adopted, self.can_adopt = [], True
 
-    def adoptable(self, before):
+    def adoptable(self, before, before_text=None):
         return self.can_adopt
 
-    def adopt(self, before, should_stop=None):
+    def adopt(self, before, should_stop=None, before_text=None):
         self.adopted.append(before)
         self.blocks = [BLOCK]
         yield {"t": CALL_TEXT}

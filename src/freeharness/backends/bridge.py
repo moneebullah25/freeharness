@@ -327,6 +327,7 @@ class Session:
     # mask the one error the human actually needs to read.
     keep_generating = False         # True: a request that is dropped does NOT stop the site's answer (the shim adopts it)
     last_before = 0                 # assistant turns on the page when the last message was sent
+    last_before_text = None         # ... and the text of the last one (a long chat keeps few turns in the page: the COUNT may not grow)
     owns_browser = True
     owns_driver = True              # False when a shared Playwright driver was passed in
     _pw = ctx = page = None
@@ -546,6 +547,7 @@ class Session:
             self.new_thread()
 
         before = self.page.locator(self.p.sel["assistant"][0]).count()
+        before_text = self._last_text()
 
         box = self._composer()
         box.click()
@@ -582,31 +584,51 @@ class Session:
             if "never sent" in self.page_state():
                 raise TimeoutError(f"could not send the prompt: {str(e)[:400]} {self.page_state()}") from None
 
-        self.last_before = before
-        yield from self._collect(before, should_stop)
+        self.last_before, self.last_before_text = before, before_text
+        yield from self._collect(before, should_stop, before_text)
 
-    def adoptable(self, before: int) -> bool:
-        """Did the chat this page is on already start (or finish) the answer to a message sent when it held `before`
-        assistant turns? Used to take over an answer whose request was dropped, instead of asking again."""
+    def _last_text(self):
+        """Text of the newest assistant turn on the page, or None when it cannot be read / there is none."""
         try:
-            return self.page.locator(self.p.sel["assistant"][0]).count() > before or self._streaming()
+            loc = self.page.locator(self.p.sel["assistant"][0])
+            return self.p.clean(loc.last.inner_text()) if loc.count() else None
+        except PWError:
+            return None
+
+    def _reply_started(self, before: int, before_text=None) -> bool:
+        """Has a reply to the message sent when the page held `before` assistant turns (the newest reading `before_text`)
+        started? ChatGPT keeps only the latest turns of a long chat in the page, so the COUNT can stay put while the
+        newest turn is a new one (MEASURED live 2026-10-28: a complete reply was on the page, the shim waited 600s)."""
+        try:
+            if self.page.locator(self.p.sel["assistant"][0]).count() > before:
+                return True
+            if before_text is not None:
+                now = self._last_text()
+                if now and now != before_text:
+                    return True
+            return False
         except PWError:
             return False
 
-    def adopt(self, before: int, should_stop=None):
+    def adoptable(self, before: int, before_text=None) -> bool:
+        """Did the chat this page is on already start (or finish) the answer to a message sent when it held `before`
+        assistant turns? Used to take over an answer whose request was dropped, instead of asking again."""
+        return self._reply_started(before, before_text) or self._streaming()
+
+    def adopt(self, before: int, should_stop=None, before_text=None):
         """Same events as ask(), for an answer that is already on (or still arriving on) the page: nothing is typed."""
         try:
             self.page.bring_to_front()
         except PWError:
             pass
-        yield from self._collect(before, should_stop)
+        yield from self._collect(before, should_stop, before_text)
 
-    def _collect(self, before: int, should_stop=None):
+    def _collect(self, before: int, should_stop=None, before_text=None):
         # Wait for the new assistant turn to exist.
         answer = self.page.locator(self.p.sel["assistant"][0])
         deadline = time.monotonic() + self.p.reply_timeout
         next_check = time.monotonic() + 2
-        while answer.count() <= before:
+        while not self._reply_started(before, before_text):
             if should_stop and should_stop():
                 if not self.keep_generating:        # the shim keeps a sticky chat's answer so the retry can adopt it
                     self.stop_generation()

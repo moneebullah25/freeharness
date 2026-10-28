@@ -50,6 +50,10 @@ releases may include breaking changes; they will be listed under **Changed**.
   400 "too large", dsh condensed the history in another new chat, and the run went on in a third. A chat that can continue also no longer needs a
   fresh prompt that fits. dsh's compaction summaries no longer trigger the "unreadable tool_call" warning.
 
+- A reply is now recognised by the newest assistant turn's TEXT changing, not only by the turn count growing. ChatGPT keeps only the latest
+  turns of a long chat in the page, so the count stayed put while a complete reply was there, and the shim waited the full 600s ("no reply
+  started") and then failed the stage. The dropped-request resume (`adopt`) uses the same check.
+
 ### Added
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
   label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,
