@@ -253,6 +253,29 @@ def _squash(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "")).strip().lower()
 
 
+_FIELD_LINE = re.compile(r"(?im)^[\s>*_|-]*\**(?:Issue|Where|What is wrong|Reproduce|Expected|Actual|Documented|Quote|Intent checked|"
+                         r"Valid input because|Duplicate search|Still present|Vote|Decision)\b")
+
+
+def invented_output_item(section: dict | None, calls: list[dict]) -> dict:
+    """The report must not show a failure no tool printed: a line of failure text (a traceback, `FAIL:`, an `...Error`) in
+    the candidate section, outside the field lines, has to appear in the output of some call of the stage. A line the model
+    made up to match its claim fails here, however many true lines surround it."""
+    text = (section or {}).get("text", "")
+    seen = _squash("\n".join(str(c.get("text", "")) for c in calls))
+    bad = []
+    for ln in text.splitlines():
+        t = ln.strip().strip("`*>- ")
+        if len(t) < 8 or _FIELD_LINE.match(ln) or not FAILSIG.search(t):
+            continue
+        if _squash(t) not in seen:
+            bad.append(t)
+    return _item("output_not_invented", "every failure line shown in the report was printed by a call of the stage",
+                 FAIL if bad else PASS,
+                 f"the report shows {oj._clip(bad[0], 90)!r}, which no call of this stage printed: paste only real output"
+                 if bad else "no failure line in the report that no call printed")
+
+
 def contract_items(section: dict | None, clone: Path | None, calls: list[dict] | None = None) -> list[dict]:
     """Is the candidate a breach of what the PROJECT says, not misuse? What the model must state in the section:
     `Documented:` (a file in the clone, optionally `:line`, or a URL, where the docs, docstring, type annotation or an

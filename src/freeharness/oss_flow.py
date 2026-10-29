@@ -418,7 +418,8 @@ class Flow:
         self._repro = repro
         clone, _ = st.find_clone(self.rd, self.repo)
         extra = st.issue_items(self.stage_calls(stage), sec) if self.from_issues else []
-        return [have] + items + extra + st.contract_items(sec, clone, self.stage_calls(stage))
+        return ([have] + items + extra + st.contract_items(sec, clone, self.stage_calls(stage))
+                + [st.invented_output_item(sec, self.stage_calls(stage))])
 
     def check_dupcheck(self, stage: Stage) -> list[dict]:
         rec_s = self.srec(stage)

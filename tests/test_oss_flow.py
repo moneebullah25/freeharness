@@ -427,3 +427,15 @@ def test_a_file_cited_from_the_workspace_root_is_found_in_the_clone(tmp_path):
     assert st._cited_file("proj/proj/core.py", clone) == "proj/core.py"
     assert st._cited_file("proj/core.py", clone) == "proj/core.py"                # a real clone path still wins
     assert st._cited_file("nothing/here.py", clone) == ""
+
+
+def test_a_failure_line_in_the_report_that_no_call_printed_is_refused():
+    clean = call(1, "python3 r.py", "archive listing: ok\nz.json: bytes_match=True\n")
+    made_up = {"text": "## Candidate 1: x\nIssue: #1\nActual: members fail with FAIL: content mismatch\n\n"
+                       "archive listing: ok\nFAIL: content mismatch for z.json: expected=164000, actual=0\n"}
+    got = st.invented_output_item(made_up, [clean])
+    assert got["status"] == "fail" and "content mismatch for z.json" in got["evidence"]
+    real = call(2, "python3 r.py", "Traceback (most recent call last):\nValueError: boom\n", 1)
+    true_report = {"text": "Actual: raises ValueError: boom\n\nTraceback (most recent call last):\nValueError: boom\n"}
+    assert st.invented_output_item(true_report, [clean, real])["status"] == "pass"
+    assert st.invented_output_item(None, [clean])["status"] == "pass"

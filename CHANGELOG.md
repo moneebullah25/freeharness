@@ -8,6 +8,9 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- New hunt check `output_not_invented`: a failure line shown in the candidate section (a traceback, `FAIL:`, an `...Error`, outside the
+  `Actual:`-style field lines) must have been printed by a call of the stage. Found when a model pasted a `FAIL:` line that no run produced
+  beside true lines from a clean run.
 - The hunt check accepts a file cited from the workspace root (`<clone>/path:line`, the way the model's `read` tool names it) as well as a
   clone-relative one for `Documented:`, `Quote:` and `Intent checked:`.
 - The hunt check `repro_run` no longer takes a plain word of the model's `Actual:` line as proof that the output shows the failure ("fail to
