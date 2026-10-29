@@ -100,8 +100,7 @@ def read_report(rd: oj.RunDir, repo: str) -> dict:
 
 
 def candidate_section(report: dict, cand_no: int) -> dict | None:
-    secs = report["sections"]
-    return secs[cand_no - 1] if len(secs) >= cand_no else None
+    return next((x for x in report["sections"] if x["no"] == cand_no), None)
 
 
 # --------------------------------------------------------------------------- stage 2: hunt, the reproduction

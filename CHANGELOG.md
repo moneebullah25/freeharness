@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- The hunt check finds the candidate section by its number (`## Candidate 2: ...`), not by its position in the report: a model that
+  rewrote the report without candidate 1 had its candidate 2 section reported as missing.
 - `oss run --resume` after a stop with `no model could finish the turn` starts again from the first model of `--models`; before, it
   kept the index of the last one (the model that had just failed) and could never fail over.
 - `oss run` waits out a shim cooldown of ten minutes or less ("every provider is cooling down; next one frees up in Ns", three

@@ -469,3 +469,11 @@ def test_a_short_provider_cooldown_is_waited_out_not_treated_as_a_failed_model()
     assert oss_flow.cooldown_wait(msg.replace("118s", "5000s")) == 0       # too long to sit through: fail over / stop
     assert oss_flow.cooldown_wait("Gemini shows a notice and no reply started") == 0
     assert oss_flow.cooldown_wait("") == 0
+
+
+def test_a_candidate_section_is_found_by_its_number_when_an_earlier_one_was_removed():
+    rep = {"sections": [{"no": 2, "title": "second", "text": "## Candidate 2: second"}]}
+    assert st.candidate_section(rep, 2)["title"] == "second"
+    assert st.candidate_section(rep, 1) is None
+    only = {"sections": [{"no": 1, "title": "first", "text": "## Candidate: first"}]}
+    assert st.candidate_section(only, 1)["title"] == "first"
