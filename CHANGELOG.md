@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- The hunt check accepts a file cited from the workspace root (`<clone>/path:line`, the way the model's `read` tool names it) as well as a
+  clone-relative one for `Documented:`, `Quote:` and `Intent checked:`.
 - The hunt check `repro_run` no longer takes a plain word of the model's `Actual:` line as proof that the output shows the failure ("fail to
   test properly" matched a clean run that printed "test completed"); only number-like values count.
 - The `oss run` hunt check does not count a call the API does not allow (`'X' object has no attribute`, an unexpected keyword argument,

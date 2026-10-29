@@ -242,6 +242,8 @@ def _cited_file(text: str, clone: Path | None) -> str:
         rel = tok.rsplit(":", 1)[0] if re.search(r":\d+$", tok) else tok
         if (clone / rel).is_file():
             return rel
+        if rel.startswith(clone.name + "/") and (clone / rel[len(clone.name) + 1:]).is_file():
+            return rel[len(clone.name) + 1:]         # cited from the workspace root, where the model's `read` paths start
         if "/" not in rel and (hit := next(clone.rglob(rel), None)) is not None:
             return str(hit.relative_to(clone))
     return ""

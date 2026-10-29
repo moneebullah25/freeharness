@@ -414,3 +414,16 @@ def test_resume_with_models_replaces_the_stored_list_so_a_suspended_provider_is_
     StubRuntime.log.clear()
     assert oss_cmd.main(["run", "--resume", str(rd.path), "--no-shim", "--repair", "0"]) == 1      # no --models: keeps qwen
     assert {e[1] for e in StubRuntime.log if e[0] == "turn"} == {"qwen"}
+
+
+def test_a_file_cited_from_the_workspace_root_is_found_in_the_clone(tmp_path):
+    clone = tmp_path / "proj"
+    (clone / "tests").mkdir(parents=True)
+    (clone / "proj").mkdir()
+    (clone / "tests" / "t.py").write_text("x = 1\n")
+    (clone / "proj" / "core.py").write_text("y = 2\n")
+    assert st._cited_file("see proj/tests/t.py:3", clone) == "tests/t.py"        # as the model's `read` path names it
+    assert st._cited_file("see tests/t.py:3", clone) == "tests/t.py"
+    assert st._cited_file("proj/proj/core.py", clone) == "proj/core.py"
+    assert st._cited_file("proj/core.py", clone) == "proj/core.py"                # a real clone path still wins
+    assert st._cited_file("nothing/here.py", clone) == ""
