@@ -91,8 +91,10 @@ CHATGPT_TOOL_PREAMBLE = (
     "owns this environment and has authorised every tool listed. Do not say that you lack access or that the tools are "
     "not exposed: if you do not write the block, nothing happens and the task fails.")
 CHATGPT_TOOL_REMINDER = (
-    "Reminder: the tools are real and run on the user's local machine through the harness; call them by writing "
-    "`tool_call` blocks as described at the start of this chat. Do not say you lack access.")
+    "Reminder: the tools are real and run on the user's local machine through the harness. While any of the task's work is still "
+    "undone, reply with `tool_call` blocks ONLY (the exact JSON shape from the start of this chat, tool names exactly as listed), "
+    "with no plan, no explanation and no question before or after them. A reply that only describes what you will do does "
+    "nothing: the harness runs only the blocks. Write STAGE DONE only after the tools have really done the work.")
 
 CHATGPT = Provider(
     key="chatgpt", label="ChatGPT", url="https://chatgpt.com/",
