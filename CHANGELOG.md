@@ -64,6 +64,10 @@ releases may include breaking changes; they will be listed under **Changed**.
   results are cut short and say "re-run the command if you need it", which is what made every new chat re-read the same issues and files.
   Neither changes what dsh stores or the history fingerprints.
 
+- `gh_setup_env` writes a placeholder for a setuptools-scm version file (`[tool.setuptools_scm] version_file` / `write_to` in the committed
+  pyproject.toml) when git already ignores that path: a plain clone of such a project (py7zr) failed at `import pkg` with
+  "No module named 'pkg.version'" because only a build writes it. A path that is not gitignored is never written (it would show in a diff).
+
 ### Added
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
   label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,

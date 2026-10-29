@@ -111,6 +111,28 @@ def redact(text) -> str:
     return TOKEN_PAT.sub("***", t)
 
 
+
+SCM_PLACEHOLDER = ('__version__ = version = "0.0.0+freeharness"\n'
+                   '__version_tuple__ = version_tuple = (0, 0, 0, "freeharness")\n')
+
+
+def scm_version_file(pyproject: str | None) -> str | None:
+    """The file a setuptools-scm project generates at build time (`[tool.setuptools_scm] version_file` or `write_to`), as a
+    safe relative path, else None. Such a file is gitignored and missing from a plain clone, so `import pkg` fails there."""
+    if not pyproject:
+        return None
+    try:
+        import tomllib
+        cfg = (tomllib.loads(pyproject).get("tool") or {}).get("setuptools_scm") or {}
+        rel = cfg.get("version_file") or cfg.get("write_to")
+    except Exception:  # noqa: BLE001  a pyproject we cannot parse is simply not handled
+        m = re.search(r'^\s*(?:version_file|write_to)\s*=\s*["\']([^"\']+)["\']', pyproject, re.M)
+        rel = m.group(1) if m else None
+    if not isinstance(rel, str) or not rel.strip() or rel.startswith(("/", "-", "~")) or ".." in rel.replace("\\", "/").split("/"):
+        return None
+    return rel if rel.endswith(".py") else None
+
+
 class Refuse(Exception):
     """A gate said no. The message is shown to the model, so it says what to fix."""
 
@@ -793,6 +815,28 @@ class Gate:
             return out if rc == 0 else None
         return read
 
+    def _scm_placeholder(self, rd: Path, col, ref: str) -> str:
+        """A setuptools-scm project imports a version file that only a build writes. Write a placeholder, but ONLY where git
+        already ignores that path (it can never become part of a diff)."""
+        rel = scm_version_file(self._tree_reader(rd, ref)("pyproject.toml"))
+        if not rel:
+            return ""
+        target = rd / rel
+        try:
+            if target.exists() or not target.parent.is_dir() or target.resolve().parent != target.parent.resolve():
+                return ""
+        except OSError:
+            return ""
+        if self._git(rd, "check-ignore", "-q", "--", rel, raw=True, check=False)[0] != 0:
+            return ""
+        try:
+            target.write_text(SCM_PLACEHOLDER, encoding="utf-8")
+        except OSError:
+            return ""
+        self._log("scm_placeholder", repo_dir=str(rd), path=rel)
+        return (f"note: {rel} is generated at build time (setuptools-scm) and is not in the clone; wrote a placeholder "
+                "(0.0.0+freeharness) so `import` works. It is gitignored: it is not part of your diff.")
+
     def _extras(self, extras) -> set[str]:
         if not isinstance(extras, str):
             raise Refuse("extras must be text: names separated by commas, for example 'test,lint'")
@@ -930,6 +974,7 @@ class Gate:
             self._install_env(venv, col, inherit, time.monotonic() + c.env_timeout)
             envs[str(venv)] = fp
             self._store("envs.json", envs)
+        placeholder = self._scm_placeholder(rd, col, ref)
         py = str(venv / "bin" / "python")
         # does it work where the agent will use it? the same sandbox its bash tool runs in
         probe = (f"{shlex.quote(py)} -c 'import sys; print(\"python\", sys.version.split()[0])' && "
@@ -951,6 +996,8 @@ class Gate:
                       "(a Python installed under $HOME is hidden from the sandbox; list its install dir in FH_SANDBOX_TOOLS)"]
         else:
             lines.append(f"python in the sandbox: {py} ({out.splitlines()[0]}); `python` and `python3` also resolve there")
+        if placeholder:
+            lines.append(placeholder)
         lines.append("tools that run here: " + (", ".join(usable) or "none") +
                      ("" if usable else "  (none declared by the repo and no standard toolchain: python -m unittest still works)"))
         if tstat != "full":

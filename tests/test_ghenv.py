@@ -466,3 +466,32 @@ def test_call_tool_reports_refusals_as_tool_errors(w):
     res = g.call_tool(gate, "gh_setup_env", {"repo_dir": "/etc"})
     assert res["isError"]
     assert g.call_tool(gate, "gh_branch", {"repo_dir": "x"})["isError"]            # missing argument
+
+
+# ============================================================================ setuptools-scm version file
+
+def test_scm_version_file_is_read_from_pyproject_and_only_when_safe():
+    ok = '[tool.setuptools_scm]\nversion_file = "py7zr/version.py"\n'
+    assert g.scm_version_file(ok) == "py7zr/version.py"
+    assert g.scm_version_file('[tool.setuptools_scm]\nwrite_to = "pkg/_version.py"\n') == "pkg/_version.py"
+    for bad in ('[tool.setuptools_scm]\nversion_file = "/etc/x.py"\n', '[tool.setuptools_scm]\nversion_file = "../x.py"\n',
+                '[tool.setuptools_scm]\nversion_file = "pkg/version.txt"\n', '[tool.setuptools_scm]\n', "[project]\nname='x'\n",
+                "", None, "not toml at all ["):
+        assert g.scm_version_file(bad) is None, bad
+
+
+def test_setup_env_writes_a_placeholder_for_a_gitignored_scm_version_file_and_never_for_a_tracked_path(w):
+    seed(w, {"pyproject.toml": '[project]\nname="proj"\nversion="0"\n[tool.setuptools_scm]\nversion_file = "src/proj/version.py"\n',
+             ".gitignore": "src/proj/version.py\n", "src/proj/__init__.py": "X = 1\n"})
+    gate = w.gate()
+    clone = w.cloned(gate)
+    note = gate._scm_placeholder(clone, None, "refs/remotes/upstream/main")
+    assert "src/proj/version.py" in note and "gitignored" in note
+    assert "0.0.0+freeharness" in (clone / "src/proj/version.py").read_text()
+    assert git("status", "--porcelain", cwd=clone).strip() == ""          # ignored: not part of any diff
+    assert gate._scm_placeholder(clone, None, "refs/remotes/upstream/main") == ""   # already there: left alone
+    # a path git does NOT ignore is never written (it would show up in the diff)
+    seed(w, {"pyproject.toml": '[project]\nname="proj"\nversion="0"\n[tool.setuptools_scm]\nversion_file = "src/proj/_v.py"\n'}, "not ignored")
+    git("fetch", "upstream", cwd=clone)
+    assert gate._scm_placeholder(clone, None, "refs/remotes/upstream/main") == ""
+    assert not (clone / "src/proj/_v.py").exists()
