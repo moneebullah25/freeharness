@@ -392,8 +392,11 @@ def oss_judge(run_dir) -> dict:
     ws = rd.workspace
     found = next((ws / "reports" / n for n in _name_variants(repo) if (ws / "reports" / n).is_file()), None)
     if not found:
+        misplaced = next((p for n in _name_variants(repo) for p in sorted(ws.glob(f"*/reports/{n}"))), None)
+        hint = (f"; it is at {misplaced.relative_to(ws)}, inside a clone: the report belongs at the workspace root "
+                f"(reports/ next to the clone, not in it), so write it there") if misplaced else ""
         items.append(_item("report_file", "reports/<repo>_issues.md exists, names the component and the candidates", FAIL,
-                           f"no reports/{_name_variants(repo)[0]} in the workspace"))
+                           f"no reports/{_name_variants(repo)[0]} in the workspace{hint}"))
     else:
         txt = found.read_text(encoding="utf-8", errors="replace")
         cands = len(re.findall(r"^#{2,3}\s+Candidate\b", txt, re.M | re.I))

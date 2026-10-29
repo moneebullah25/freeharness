@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- The `report_file` check says where a report saved inside the clone is (`<clone>/reports/<repo>_issues.md`) and that it belongs at the
+  workspace root; before, the model only heard "no reports/... in the workspace" and repeated the wrong path.
 - The hunt check `repro_run` needs the run output to show the exception class the `Actual:` line names: a different traceback (a clean
   `ParserMatchError` where the report claims `IndexError`) is a different behaviour and does not show the claim.
 - When a hunt repro fails on a missing module, the unmet-item message now says that pip has no network there and that `gh_setup_env` returns

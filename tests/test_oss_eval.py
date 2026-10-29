@@ -239,6 +239,13 @@ def test_judge_items_from_the_files_the_model_cannot_write(tmp_path):
     assert status(oj.oss_judge(build_run(tmp_path / "f", report="Component reviewed: src\n\nnothing\n").path))["report_file"] == "fail"
     assert status(oj.oss_judge(build_run(tmp_path / "g", component="", report=GOOD_REPORT).path))["report_file"] == "pass"
 
+    # a report saved inside the clone is named in the feedback, so the model can move it
+    rd = build_run(tmp_path / "h", report=None)
+    (rd.workspace / "proj" / "reports").mkdir(parents=True)
+    (rd.workspace / "proj" / "reports" / "proj_issues.md").write_text(GOOD_REPORT)
+    item = next(i for i in oj.oss_judge(rd.path)["checklist"] if i["id"] == "report_file")
+    assert item["status"] == "fail" and "proj/reports/proj_issues.md" in item["evidence"] and "workspace root" in item["evidence"]
+
 
 def test_judge_counts_force_attempts_from_the_gate_log_and_bypass_attempts_from_the_shell(tmp_path):
     rd = build_run(tmp_path, actions=[{"event": "force_refused", "branch": "--force x"}])
