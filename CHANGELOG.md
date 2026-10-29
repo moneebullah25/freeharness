@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- The hunt check `repro_run` no longer takes a plain word of the model's `Actual:` line as proof that the output shows the failure ("fail to
+  test properly" matched a clean run that printed "test completed"); only number-like values count.
 - The `oss run` hunt check does not count a call the API does not allow (`'X' object has no attribute`, an unexpected keyword argument,
   a missing positional argument) as the failure of a repro: it is the repro's misuse, not a bug in the project. `'NoneType' ... no attribute` still counts.
 - The no-tool-call nudge never applies to dsh's compaction request: its reply is a summary, which the nudge would have replaced.

@@ -102,6 +102,7 @@ def test_search_result_rows_are_read_from_the_models_own_gh_search_calls():
     ("5\n", "6", "5", True),                                       # the model's stated wrong value really appears
     ("6\n", "6", "5", False),
     ("ok\n", "", "", False),
+    ("writestr completed\ntest completed\n", "a valid archive", "Archive members fail to read or test properly.", False),   # a word of the prose is not a value
     ("FAILED tests/test_x.py::test_a - assert 1 == 2", "", "", True),
     ("ModuleNotFoundError: No module named 'yaml'", "", "", False),   # an environment problem is not the bug
     ("bash: foo: command not found\n[exit code: 127]", "", "", False),

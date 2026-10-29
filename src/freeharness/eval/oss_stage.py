@@ -138,11 +138,12 @@ def is_run_command(command: str) -> bool:
 
 
 def wrong_value(expected: str, actual: str, body: str) -> str:
-    """A token of the model's stated ACTUAL (absent from its stated EXPECTED) that really appears in the run's output."""
+    """A number-like token (it has a digit) of the model's stated ACTUAL, absent from its stated EXPECTED, that really appears in
+    the run's output. A plain word never counts: "fails to test properly" matched the "test completed" of a run that was fine."""
     exp = {w.lower().strip(".-+") for w in _WORD.findall(expected or "")}
     for w in _WORD.findall(actual or ""):
         w = w.strip(".-+")
-        if not w or w.lower() in exp or w.lower() in _STOP:
+        if not w or w.lower() in exp or w.lower() in _STOP or not any(ch.isdigit() for ch in w):
             continue
         if re.search(rf"(?<![\w.]){re.escape(w)}(?![\w.])", body):
             return w
