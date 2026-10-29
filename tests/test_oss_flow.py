@@ -439,3 +439,11 @@ def test_a_failure_line_in_the_report_that_no_call_printed_is_refused():
     true_report = {"text": "Actual: raises ValueError: boom\n\nTraceback (most recent call last):\nValueError: boom\n"}
     assert st.invented_output_item(true_report, [clean, real])["status"] == "pass"
     assert st.invented_output_item(None, [clean])["status"] == "pass"
+
+
+def test_headings_and_prose_that_name_an_error_are_not_pasted_output():
+    sec = {"text": "## Candidate 1: average() raises ZeroDivisionError on an empty list\n- What is wrong: it raises ZeroDivisionError: division by zero\n"
+                   "Repro output:\n\n    ZeroDivisionError: division by zero\n"}
+    ran = call(1, "python3 r.py", "ZeroDivisionError: division by zero\n", 1)
+    assert st.invented_output_item(sec, [ran])["status"] == "pass"
+    assert st.invented_output_item(sec, [call(2, "python3 r.py", "ok\n")])["status"] == "fail"      # the pasted line was never printed

@@ -257,16 +257,20 @@ _FIELD_LINE = re.compile(r"(?im)^[\s>*_|-]*\**(?:Issue|Where|What is wrong|Repro
                          r"Valid input because|Duplicate search|Still present|Vote|Decision)\b")
 
 
+_OUTPUT_START = re.compile(r"(?:Traceback \(most recent call last\)|FAIL(?:ED)?\b|[A-Z]\w*(?:Error|Exception)\b\s*:|AssertionError|"
+                           r"panic:|error\[E\d+\]|Segmentation fault|Unhandled)")
+
+
 def invented_output_item(section: dict | None, calls: list[dict]) -> dict:
-    """The report must not show a failure no tool printed: a line of failure text (a traceback, `FAIL:`, an `...Error`) in
-    the candidate section, outside the field lines, has to appear in the output of some call of the stage. A line the model
+    """The report must not show a failure no tool printed: a line that BEGINS like failure output (a traceback, `FAIL:`,
+    `SomeError: ...`) in the candidate section, outside the field lines and headings, has to appear in the output of some call. A line the model
     made up to match its claim fails here, however many true lines surround it."""
     text = (section or {}).get("text", "")
     seen = _squash("\n".join(str(c.get("text", "")) for c in calls))
     bad = []
     for ln in text.splitlines():
         t = ln.strip().strip("`*>- ")
-        if len(t) < 8 or _FIELD_LINE.match(ln) or not FAILSIG.search(t):
+        if len(t) < 8 or _FIELD_LINE.match(ln) or not _OUTPUT_START.match(t):
             continue
         if _squash(t) not in seen:
             bad.append(t)
