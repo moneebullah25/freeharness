@@ -171,7 +171,10 @@ def failure_signal(output: str, expected: str = "", actual: str = "") -> tuple[s
     failure (missing module, command not found...), which is a broken repro, not the bug."""
     body = _EXIT.sub("", output or "")
     if INFRA.search(body):
-        return "", "the output shows an environment, syntax or API-misuse problem (" + INFRA.search(body).group(0) + "), not the bug"
+        hit = INFRA.search(body).group(0)
+        hint = (" (pip has no network here: call gh_setup_env {repo_dir: <the clone>} and run the repro with the COMMAND PREFIX it returns)"
+                if re.search(r"ModuleNotFoundError|No module named", hit) else "")
+        return "", "the output shows an environment, syntax or API-misuse problem (" + hit + ")" + hint + ", not the bug"
     if FAILSIG.search(body):
         return "failure text in the output (" + FAILSIG.search(body).group(0)[:40] + ")", ""
     w = wrong_value(expected, actual, body)

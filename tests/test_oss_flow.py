@@ -447,3 +447,9 @@ def test_headings_and_prose_that_name_an_error_are_not_pasted_output():
     ran = call(1, "python3 r.py", "ZeroDivisionError: division by zero\n", 1)
     assert st.invented_output_item(sec, [ran])["status"] == "pass"
     assert st.invented_output_item(sec, [call(2, "python3 r.py", "ok\n")])["status"] == "fail"      # the pasted line was never printed
+
+
+def test_a_missing_module_names_the_way_to_get_an_environment():
+    sig, prob = st.failure_signal("ModuleNotFoundError: No module named 'dateutil'")
+    assert sig == "" and "gh_setup_env" in prob and "COMMAND PREFIX" in prob
+    assert "gh_setup_env" not in st.failure_signal("bash: foo: command not found")[1]
