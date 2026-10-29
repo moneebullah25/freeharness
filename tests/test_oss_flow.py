@@ -453,3 +453,11 @@ def test_a_missing_module_names_the_way_to_get_an_environment():
     sig, prob = st.failure_signal("ModuleNotFoundError: No module named 'dateutil'")
     assert sig == "" and "gh_setup_env" in prob and "COMMAND PREFIX" in prob
     assert "gh_setup_env" not in st.failure_signal("bash: foo: command not found")[1]
+
+
+def test_a_failure_that_is_not_the_one_actual_names_does_not_prove_the_claim():
+    tb = "Traceback (most recent call last):\n  File \"r.py\", line 3, in <module>\narrow.parser.ParserMatchError: bad format\n"
+    sig, prob = st.failure_signal(tb, "a clean error", "an unhandled IndexError: no such group")
+    assert sig == "" and "IndexError" in prob and "different behaviour" in prob
+    assert st.failure_signal(tb, "", "raises ParserMatchError instead of returning")[0]      # the named error is the one shown
+    assert st.failure_signal(tb, "", "it breaks")[0]                                       # no class named: the traceback stands

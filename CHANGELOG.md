@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- The hunt check `repro_run` needs the run output to show the exception class the `Actual:` line names: a different traceback (a clean
+  `ParserMatchError` where the report claims `IndexError`) is a different behaviour and does not show the claim.
 - When a hunt repro fails on a missing module, the unmet-item message now says that pip has no network there and that `gh_setup_env` returns
   the COMMAND PREFIX to run the repro with (a model kept trying `pip install`).
 - The one-nudge guard now covers every provider for a reply that holds JSON (or the word `tool_call`) but no readable call, such as a call

@@ -114,6 +114,7 @@ INFRA = re.compile(r"command not found|No such file or directory|ModuleNotFoundE
 FAILSIG = re.compile(r"Traceback \(most recent call last\)|\b[A-Z]\w*(?:Error|Exception)\b|panic:|\bFAILED\b|\bFAIL\b|"
                      r"AssertionError|Segmentation fault|error\[E\d+\]|Unhandled")
 _RUN = re.compile(r"^(python[0-9.]*|py|node|nodejs|deno|bun|ruby|php|perl|lua|julia|java|go run|cargo run|dotnet run|\./\S+)\b")
+_EXC = re.compile(r"\b[A-Z]\w*(?:Error|Exception)\b")
 _EXIT = re.compile(r"\n?\[exit code: -?\d+\]\s*$")
 _WORD = re.compile(r"[A-Za-z0-9_.+\-]+")
 _STOP = {"the", "a", "an", "is", "are", "was", "of", "to", "in", "on", "and", "or", "but", "got", "returns", "return", "instead",
@@ -176,6 +177,10 @@ def failure_signal(output: str, expected: str = "", actual: str = "") -> tuple[s
                 if re.search(r"ModuleNotFoundError|No module named", hit) else "")
         return "", "the output shows an environment, syntax or API-misuse problem (" + hit + ")" + hint + ", not the bug"
     if FAILSIG.search(body):
+        named = set(_EXC.findall(actual or ""))
+        if named and not any(re.search(rf"\b{re.escape(n)}\b", body) for n in named):
+            return "", ("the output shows a failure, but not the one your Actual: line states (" + ", ".join(sorted(named)) +
+                        "): it is a different behaviour, so it does not show your claim")
         return "failure text in the output (" + FAILSIG.search(body).group(0)[:40] + ")", ""
     w = wrong_value(expected, actual, body)
     if w:
