@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- A tool call whose JSON lacks only its closing braces (ChatGPT drops the last one) is now read; a call cut inside a string or after a comma is
+  still never run.
 - A reply from ChatGPT that offers tools but only narrates the next step or says it cannot use them (no tool call) is answered once in the SAME chat
   with a short nudge (`Provider.nudge`); a second such reply fails the provider over to the next one (`Stalled`, 30-minute cooldown, browser kept)
   instead of spending more chats on it. Providers without a nudge, and requests without tools, are unchanged.

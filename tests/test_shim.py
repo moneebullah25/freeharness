@@ -165,6 +165,16 @@ def test_truncated_first_copy_does_not_hide_the_whole_one():
     print("  truncated copy first .. ok")
 
 
+def test_a_call_missing_only_its_closing_braces_is_read_but_a_cut_string_is_not():
+    # Measured on ChatGPT (2026-10-29): `tool_call\n{"name":"bash","arguments":{...}` with the last brace dropped.
+    short = 'tool_call\n{"name":"bash","arguments":{"description":"look","command":"ls -la 2>&1;"}'
+    _, calls = shim.parse_reply(short, [], TOOLS)
+    assert [json.loads(c["function"]["arguments"]) for c in calls] == [{"description": "look", "command": "ls -la 2>&1;"}]
+    for cut in ('tool_call\n{"name":"bash","arguments":{"command":"rm -rf /tmp/some',      # cut inside a string
+                'tool_call\n{"name":"bash","arguments":{"command":"ls",'):                    # cut after a comma
+        assert shim.parse_reply(cut, [], TOOLS)[1] == []
+
+
 def test_provider_spec_all_and_unknown():
     from freeharness.backends import providers
     assert providers.resolve("gemini, qwen") == ["gemini", "qwen"]

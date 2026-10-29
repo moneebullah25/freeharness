@@ -622,6 +622,14 @@ def _json_objects(text: str):
                     i = j + 1
                     break
         else:
+            if depth > 0 and not in_str and not text[i:].rstrip("` \n\r\t").endswith(","):
+                # only closing braces are missing (ChatGPT dropped the last one): every string is complete, so the call
+                # is whole. A cut inside a string (a truncated command) is never repaired.
+                try:
+                    yield json.loads(text[i:].rstrip("` \n\r\t") + "}" * depth, strict=False, object_pairs_hook=_pairs), len(text)
+                    return
+                except json.JSONDecodeError:
+                    pass
             i += 1          # unbalanced (a truncated copy): later copies may be whole
 
 
