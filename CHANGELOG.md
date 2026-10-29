@@ -8,6 +8,9 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- On a second hunt candidate, `DECISION: no_other_candidate` is accepted at once only after the stage read two other issues; otherwise
+  the model gets one repair turn telling it to list and read the open bug issues and try a reproduction before giving up (Gemini had
+  ended a run after one text turn and no tool call).
 - The `report_file` check says where a report saved inside the clone is (`<clone>/reports/<repo>_issues.md`) and that it belongs at the
   workspace root; before, the model only heard "no reports/... in the workspace" and repeated the wrong path.
 - The hunt check `repro_run` needs the run output to show the exception class the `Actual:` line names: a different traceback (a clean

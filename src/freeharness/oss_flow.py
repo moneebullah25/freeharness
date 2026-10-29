@@ -147,6 +147,11 @@ DECISION: proceed | DECISION: duplicate:#N | DECISION: competing:#N"""
 
 CONTINUE = ("The previous model stopped before finishing this stage. Check your earlier tool results in this session, do not "
             "repeat finished work, and finish what is missing.\n")
+NO_OTHER_CHALLENGE = ("You said there is no other candidate, but this stage read fewer than two other issues and ran no reproduction. "
+                      "That is not enough to give up. List the open bug issues again (gh_list_issues, label bug), read at least two "
+                      "you have not tried (not the dropped candidate), and try to reproduce one with real code. Only if none "
+                      "reproduces, end with DECISION: no_other_candidate again; otherwise write its candidate section and end "
+                      "with STAGE DONE.\n")
 RESUMED = ("The run was interrupted and resumed. Some of this stage may already be done: check your earlier tool results and "
            "the files before repeating anything.\n")
 
@@ -530,6 +535,14 @@ class Flow:
             if stage.id == "hunt" and self.state["candidate_no"] > 1:
                 d = st.parse_decision(list(self.rec.texts) + [res.final_text])
                 if d and d["kind"] == "no_other_candidate":
+                    looked = {str((json.loads(c["args"]) if isinstance(c.get("args"), str) and c["args"].startswith("{")
+                                   else c.get("args") or {}).get("number")) for c in self.stage_calls(stage)
+                              if str(c.get("name", "")).endswith("gh_issue_read")}
+                    if len(looked) < 2 and not rec_s.get("challenged"):
+                        rec_s["challenged"] = True
+                        self.note(f"hunt: 'no other candidate' after reading {len(looked)} other issue(s): asking it to look first")
+                        prompt, kind = NO_OTHER_CHALLENGE, "repair"
+                        continue
                     return self.block(stage, "no other candidate: the model found no further reproducible bug", kind="duplicate")
             items = self.evaluate(stage)
             unmet = [i for i in items if i["status"] == oj.FAIL]

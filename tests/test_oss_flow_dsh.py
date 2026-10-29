@@ -277,12 +277,15 @@ def oss_cmd_blocked():
 def test_a_duplicate_without_another_candidate_ends_blocked_duplicate(world):
     world.fake.add_item("up/proj", 12, "issue", "average() crashes on []", "ZeroDivisionError average empty")
     steps = (s_setup() + s_hunt() + s_dup(decision="DECISION: duplicate:#12")
-             + [{"text": "I looked again and there is no other reproducible bug here.\nDECISION: no_other_candidate"}])
+             + [{"text": "I looked again and there is no other reproducible bug here.\nDECISION: no_other_candidate"}]
+             + [{"text": "I read the open bug issues again; none reproduces.\nDECISION: no_other_candidate"}])
     code, rd = run_flow(world, steps)
     s = state(rd)
     assert s["outcome"] == "blocked: duplicate" and code == oss_cmd_blocked()
+    challenge = [e for e in stage_log(rd, "hunt") if e["event"] == "turn" and e["kind"] == "repair"][-1]["prompt"]
+    assert "read fewer than two other issues" in challenge and s["stages"]["hunt"]["challenged"] is True
     assert s["stages"]["hunt"]["status"] == "blocked" and "no other candidate" in s["stages"]["hunt"]["reason"]
-    hunt2 = [e for e in stage_log(rd, "hunt") if e["event"] == "turn"][-1]["prompt"]
+    hunt2 = [e for e in stage_log(rd, "hunt") if e["event"] == "turn" and e["kind"] == "stage"][-1]["prompt"]
     assert "was dropped: duplicate:#12" in hunt2 and "average() crashes on []" in hunt2
     assert "DECISION: no_other_candidate" in hunt2
 
@@ -293,7 +296,8 @@ def test_the_harness_feeds_back_overlapping_titles_so_a_competing_pr_is_noticed(
     steps = (s_setup() + s_hunt()
              + s_dup(decision="DECISION: proceed")                                                 # the model misses it ...
              + [{"text": "#12 is the same fix: an open PR for exactly this.\nDECISION: competing:#12"}]   # ... the review turn
-             + [{"text": "no other candidate\nDECISION: no_other_candidate"}])
+             + [{"text": "no other candidate\nDECISION: no_other_candidate"}]
+             + [{"text": "still none\nDECISION: no_other_candidate"}])
     code, rd = run_flow(world, steps)
     s = state(rd)
     hist = [h for h in s["history"] if h["id"] == "dupcheck"][0]
