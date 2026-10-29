@@ -166,7 +166,33 @@ def missing_expected(expected: str, actual: str, body: str) -> str:
     return ""
 
 
-def failure_signal(output: str, expected: str = "", actual: str = "") -> tuple[str, str]:
+_NEXT_FIELD = re.compile(r"(?im)^[\s>*_|-]*\**(?:Issue|Where|What is wrong|Reproduce|Expected|Actual|Documented|Quote|Intent checked|"
+                         r"Valid input because|Duplicate search|Still present|Vote|Decision)\b\**\s*:|^#{1,6}\s")
+
+
+def field_block(text: str, name: str) -> list[str]:
+    """The lines of a `Name:` field of the candidate section: the rest of its line and the lines under it, up to the next
+    field or heading (code fence marks left out)."""
+    m = re.search(rf"(?im)^[\s>*_-]*\**{name}\**\s*:\**[ \t]*(.*)$", text or "")
+    if not m:
+        return []
+    out = [m.group(1)]
+    for ln in (text[m.end():] or "").splitlines()[1:]:
+        if _NEXT_FIELD.match(ln):
+            break
+        out.append(ln)
+    return [ln.strip() for ln in out if ln.strip() and not ln.strip().startswith("```")]
+
+
+def quoted_output(output: str, exp_block: list[str], act_block: list[str]) -> str:
+    """A line (12+ characters) of the model's ACTUAL block that the run's output printed verbatim and that its EXPECTED block
+    does not say: for a bug of structure (a wrong parse tree) with no error text and no number, the report quotes what ran."""
+    lines = set(_output_lines(output))
+    exp = set(exp_block)
+    return next((ln for ln in act_block if len(ln) >= 12 and ln in lines and ln not in exp), "")
+
+
+def failure_signal(output: str, expected: str = "", actual: str = "", exp_block=(), act_block=()) -> tuple[str, str]:
     """(signal, problem). signal is why this output shows a failure ('' = it does not); problem names an environment
     failure (missing module, command not found...), which is a broken repro, not the bug."""
     body = _EXIT.sub("", output or "")
@@ -187,6 +213,9 @@ def failure_signal(output: str, expected: str = "", actual: str = "") -> tuple[s
     m = missing_expected(expected, actual, body)
     if m:
         return f"the output lacks the stated expected value {m!r}", ""
+    q = quoted_output(body, list(exp_block), list(act_block))
+    if q:
+        return f"the output prints the line your Actual: block quotes ({q[:50]!r})", ""
     return "", ""
 
 
@@ -200,13 +229,14 @@ def find_repro(stage_calls: list[dict], section: dict | None) -> tuple[list[dict
     shows a failure by deterministic rules (traceback/error/FAIL text, or the model's stated wrong value)."""
     text = (section or {}).get("text", "")
     expected, actual = field(text, "Expected"), field(text, "Actual")
+    exp_block, act_block = field_block(text, "Expected"), field_block(text, "Actual")
     repro, problem, tried = None, "", 0
     for c in reversed([c for c in stage_calls if oj._is(c, "bash") and not c.get("isError")]):
         cmd = (c.get("args") or {}).get("command", "")
         if not is_run_command(cmd):
             continue
         tried += 1
-        sig, prob = failure_signal(c.get("text", ""), expected, actual)
+        sig, prob = failure_signal(c.get("text", ""), expected, actual, exp_block, act_block)
         if tried == 1:
             problem = prob                      # only the latest run: an environment error fixed since is no longer the reason
         if sig:

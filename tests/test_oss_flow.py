@@ -477,3 +477,26 @@ def test_a_candidate_section_is_found_by_its_number_when_an_earlier_one_was_remo
     assert st.candidate_section(rep, 1) is None
     only = {"sections": [{"no": 1, "title": "first", "text": "## Candidate: first"}]}
     assert st.candidate_section(only, 1)["title"] == "first"
+
+
+TREE_REPORT = """## Candidate 2: grouping
+Expected:
+The join condition and the third table are separate tokens.
+Actual:
+<class 'sqlparse.sql.IdentifierList'> --> 't1.c1 = t2.c2\\n, t3'
+<class 'sqlparse.sql.Where'> --> 'where t1.c1 = t3.c3'
+Documented: x
+"""
+
+
+def test_a_structural_bug_is_shown_by_actual_lines_the_run_really_printed():
+    text = TREE_REPORT
+    exp_b, act_b = st.field_block(text, "Expected"), st.field_block(text, "Actual")
+    assert exp_b == ["The join condition and the third table are separate tokens."]
+    assert act_b[0].startswith("<class 'sqlparse.sql.IdentifierList'>") and len(act_b) == 2
+    out = "---\n<class 'sqlparse.sql.IdentifierList'> --> 't1.c1 = t2.c2\\n, t3'\n"
+    sig, _ = st.failure_signal(out, "", "", exp_b, act_b)
+    assert "prints the line your Actual: block quotes" in sig
+    # the same lines are not evidence when the run printed something else, or when Expected says them too
+    assert not st.failure_signal("all fine\n", "", "", exp_b, act_b)[0]
+    assert not st.failure_signal(out, "", "", act_b, act_b)[0]

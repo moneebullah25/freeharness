@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- The hunt check `repro_run` also accepts a bug of structure (a wrong parse tree: no error text, no number): a line of the `Actual:`
+  block that the run printed verbatim and the `Expected:` block does not say. It was rejecting a real, correct reproduction.
 - The hunt check finds the candidate section by its number (`## Candidate 2: ...`), not by its position in the report: a model that
   rewrote the report without candidate 1 had its candidate 2 section reported as missing.
 - `oss run --resume` after a stop with `no model could finish the turn` starts again from the first model of `--models`; before, it
