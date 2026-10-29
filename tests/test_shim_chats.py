@@ -928,3 +928,9 @@ def test_the_refusal_chatgpt_actually_gave_is_recognised_curly_apostrophe_and_al
             "and GitHub operations through the tools available in this chat interface.\n\nSTAGE DONE")
     assert shim.stalled(PROVIDERS["chatgpt"], real, [], TOOLS_S)
     assert not shim.stalled(PROVIDERS["chatgpt"], "Report written to reports/x.md. STAGE DONE", [], TOOLS_S)
+
+
+def test_the_narrate_and_stop_reply_from_the_py7zr_hunt_is_recognised():
+    said = ("The PPMd reproduction completed without an error. I'll use issue #398 as the candidate instead because its "
+            "reported failure can be checked directly by writing a zero-byte file.\n\nSTAGE DONE")
+    assert shim.stalled(PROVIDERS["chatgpt"], said, [], TOOLS_S)
