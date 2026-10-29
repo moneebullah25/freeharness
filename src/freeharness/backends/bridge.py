@@ -719,7 +719,12 @@ class Session:
         if not self.p.full_markers:
             return False
         text = self._notice_text()
-        return any(m in text for m in self.p.full_markers)
+        hit = next((m for m in self.p.full_markers if m in text), "")
+        if hit:        # say WHAT matched: a false match costs a new chat (the account's chat count is limited)
+            i = text.find(hit)
+            print(f"  {self.p.label}: chat-full marker {hit!r} matched in the page's notices/last reply: "
+                  f"{' '.join(text[max(0, i - 120):i + 160].split())!r}", file=sys.stderr)
+        return bool(hit)
 
     def page_notice(self, markers) -> str:
         """The first of `markers` (lower-case) that the page's notices show, else ''."""
