@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- The `oss run` hunt check does not count a call the API does not allow (`'X' object has no attribute`, an unexpected keyword argument,
+  a missing positional argument) as the failure of a repro: it is the repro's misuse, not a bug in the project. `'NoneType' ... no attribute` still counts.
 - The no-tool-call nudge never applies to dsh's compaction request: its reply is a summary, which the nudge would have replaced.
 - A tool call whose JSON lacks only its closing braces (ChatGPT drops the last one) is now read; a call cut inside a string or after a comma is
   still never run.

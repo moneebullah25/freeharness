@@ -107,7 +107,10 @@ def candidate_section(report: dict, cand_no: int) -> dict | None:
 # --------------------------------------------------------------------------- stage 2: hunt, the reproduction
 
 INFRA = re.compile(r"command not found|No such file or directory|ModuleNotFoundError|No module named|SyntaxError|"
-                   r"IndentationError|Permission denied|not recognized as|Network is unreachable")
+                   r"IndentationError|Permission denied|not recognized as|Network is unreachable|"
+                   # a call the API does not allow (a method or argument that does not exist) is misuse, not a bug in the project
+                   r"'(?!NoneType\b)[A-Z]\w*' object has no attribute|got an unexpected keyword argument|"
+                   r"missing \d+ required positional argument")
 FAILSIG = re.compile(r"Traceback \(most recent call last\)|\b[A-Z]\w*(?:Error|Exception)\b|panic:|\bFAILED\b|\bFAIL\b|"
                      r"AssertionError|Segmentation fault|error\[E\d+\]|Unhandled")
 _RUN = re.compile(r"^(python[0-9.]*|py|node|nodejs|deno|bun|ruby|php|perl|lua|julia|java|go run|cargo run|dotnet run|\./\S+)\b")
@@ -167,7 +170,7 @@ def failure_signal(output: str, expected: str = "", actual: str = "") -> tuple[s
     failure (missing module, command not found...), which is a broken repro, not the bug."""
     body = _EXIT.sub("", output or "")
     if INFRA.search(body):
-        return "", "the output shows an environment/syntax problem (" + INFRA.search(body).group(0) + "), not the bug"
+        return "", "the output shows an environment, syntax or API-misuse problem (" + INFRA.search(body).group(0) + "), not the bug"
     if FAILSIG.search(body):
         return "failure text in the output (" + FAILSIG.search(body).group(0)[:40] + ")", ""
     w = wrong_value(expected, actual, body)

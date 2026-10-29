@@ -105,6 +105,9 @@ def test_search_result_rows_are_read_from_the_models_own_gh_search_calls():
     ("FAILED tests/test_x.py::test_a - assert 1 == 2", "", "", True),
     ("ModuleNotFoundError: No module named 'yaml'", "", "", False),   # an environment problem is not the bug
     ("bash: foo: command not found\n[exit code: 127]", "", "", False),
+    ("FAIL: reading z.json raised AttributeError: 'SevenZipFile' object has no attribute 'open'", "", "", False),   # a method that does not exist is misuse
+    ("TypeError: f() got an unexpected keyword argument 'x'", "", "", False),
+    ("AttributeError: 'NoneType' object has no attribute 'read'", "", "", True),       # a None where a value was due can be the bug
     ("", "x", "y", False),
     ("datetime.datetime(2020, 2, 15, 12, 34, 23)\n", "datetime.datetime(2020, 2, 15, 12, 34, 23, 999999)", "datetime.datetime(2020, 2, 15, 12, 34, 23, 0)", True),
     ("3\n", "0 or a clear error", "", False),                      # plain words in Expected are not proof; neither is a missing small number
