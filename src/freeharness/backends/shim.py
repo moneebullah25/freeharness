@@ -827,6 +827,12 @@ _STALL = re.compile(
     r"|\bI need to\b|\bI(?:['\u2019]m| am) going to\b|\bcan be checked by\b)", re.I)
 
 
+def is_compaction(messages) -> bool:
+    """dsh's own request to summarise the history: its reply is prose by design, never a missed tool call."""
+    return any("compaction engine" in _text(m.get("content")).lower() for m in messages or ()
+               if m.get("role") in ("system", "user"))
+
+
 def stalled(prov: Provider, text: str, blocks: list[str], tools) -> bool:
     """True for a reply from a provider with a nudge that offered tools, called none, and only narrates or declines."""
     if not (prov.nudge and tools) or "DECISION:" in text:
@@ -1193,7 +1199,7 @@ class Router:
                     if self._reply_says_full(prov, text, blocks):
                         raise SiteFull(f"{prov.label} says the chat is full or the message too long: "
                                        f"{text.strip()[:120]!r}")
-                    if hold and stalled(prov, text, blocks, tools):
+                    if hold and not is_compaction(messages) and stalled(prov, text, blocks, tools):
                         # Prose where a tool call was due: say so ONCE in the same chat; the same again fails the provider
                         # over (the next one gets the work and the state block) instead of spending more chats on it.
                         self.log(f"shim: {key} answered without a tool call ({text.strip()[:160]!r}); nudging once")

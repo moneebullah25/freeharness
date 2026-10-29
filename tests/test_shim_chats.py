@@ -939,3 +939,12 @@ def test_the_narrate_and_stop_reply_from_the_py7zr_hunt_is_recognised():
 def test_a_couldnt_complete_refusal_is_recognised():
     said = "I couldn\u2019t complete the required local file edits or reproduction run in this turn. The report is still missing."
     assert shim.stalled(PROVIDERS["chatgpt"], said, [], TOOLS_S)
+
+
+def test_a_compaction_summary_is_never_nudged():
+    msgs = convo(1)
+    msgs[0] = {"role": "system", "content": "You are now acting as a compaction engine. Summarise the conversation."}
+    sess = ScriptSession([("The next step is to read the issue. I need to run the repro.", [])])
+    r = make_router("chatgpt", sess)
+    events, calls = step(r, "chatgpt", msgs, TOOLS)
+    assert len(sess.prompts) == 1 and not calls
