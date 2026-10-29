@@ -841,3 +841,15 @@ def test_the_state_block_is_in_the_prompt_of_a_fresh_chat():
     msgs = _result_msgs(5, [f"result {i} " + "y" * 500 for i in range(5)])
     step(r, "gemini", msgs)
     assert "State so far" in s.prompts[0] and "bash" in s.prompts[0].split("State so far", 1)[1]
+
+
+def test_the_state_block_survives_a_fit_that_drops_the_oldest_messages():
+    """MEASURED live 2026-10-29: the fit dropped the first user message, and the block attached to it went with it."""
+    s = ScriptSession()
+    r = make_router("gemini", s)
+    r.fresh_budget = lambda key: 6_000                              # far less than the history
+    msgs = _result_msgs(30, [f"result {i} " + "y" * 900 for i in range(30)])
+    msgs.insert(2 + 2 * 28, {"role": "user", "content": "stage 2 prompt"})   # a later stage: everything before it can go
+    step(r, "gemini", msgs)
+    assert "State so far" in s.prompts[0] and len(s.prompts[0]) <= 6_400
+    assert "earlier conversation omitted" in s.prompts[0]           # the fit really did drop messages

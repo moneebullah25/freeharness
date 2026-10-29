@@ -362,10 +362,10 @@ def state_block(messages: list[dict]) -> str:
             "and reports they wrote are on disk, so read those instead of repeating the work.]\n" + "\n".join(out)) if out else ""
 
 
-def add_state_block(messages: list[dict], source: list[dict]) -> list[dict]:
+def add_state_block(messages: list[dict], source: list[dict], block: str | None = None) -> list[dict]:
     """`messages` with the state of `source` appended to the FIRST user message (so it is never mistaken for the newest
     request). Returns `messages` itself when there is nothing to add."""
-    block = state_block(source)
+    block = state_block(source) if block is None else block
     first = next((i for i, m in enumerate(messages) if m.get("role") == "user"), -1)
     if not block or first < 0:
         return messages
@@ -1046,8 +1046,10 @@ class Router:
             budget = self.fresh_budget(key)           # None until a limit has been learned from the site
             if budget not in cache:
                 compact = digest_history(compact_messages(messages), tools)   # every fresh chat gets a bounded history
-                compact = add_state_block(compact, messages)                  # ... and what was already done
-                cache[budget] = render_prompt(fit_messages(compact, tools, budget), tools)
+                block = state_block(messages)                                 # ... and what was already done
+                room = None if budget is None else max(budget - len(block) - 60, 1_000)
+                # fit first, then attach: the fit may drop the oldest whole messages, and the block must not go with them
+                cache[budget] = render_prompt(add_state_block(fit_messages(compact, tools, room), messages, block), tools)
             return cache[budget]
 
         def can_continue(k):         # a chat that can take the new messages needs no fresh prompt that fits
