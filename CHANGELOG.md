@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- `oss run --resume` after a stop with `no model could finish the turn` starts again from the first model of `--models`; before, it
+  kept the index of the last one (the model that had just failed) and could never fail over.
 - `oss run` waits out a shim cooldown of ten minutes or less ("every provider is cooling down; next one frees up in Ns", three
   waits per turn) and retries the same turn, instead of ending the stage `blocked: no model could finish the turn`.
 - On a second hunt candidate, `DECISION: no_other_candidate` is accepted at once only after the stage read two other issues; otherwise

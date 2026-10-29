@@ -695,6 +695,8 @@ def execute_flow(rd: oj.RunDir, repo: str, models: list[str], live: bool, max_st
     if not state:
         cfg = oj._json(rd.config)
         state = new_state(rd, repo, cfg.get("component", ""), live, cfg.get("source", "code"), cfg.get("label", "bug"))
+    if resume and (state.get("blocked") or {}).get("kind") == "models":
+        state["model_idx"] = 0                  # every model had failed: try them again from the first, not the last that failed
     state["outcome"] = "running"
     oss_cmd.write_json(rd.run, info)
     approver = approver_factory(rd) if approver_factory else None
