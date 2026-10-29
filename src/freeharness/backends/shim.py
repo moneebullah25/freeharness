@@ -833,11 +833,24 @@ def is_compaction(messages) -> bool:
                if m.get("role") in ("system", "user"))
 
 
+NUDGE_MALFORMED = (
+    "That reply held JSON but no readable tool call, so the harness did nothing. A call is ONE JSON object with BOTH \"name\" "
+    "(the tool, exactly as listed) and \"arguments\" (an object), inside a ```tool_call fence. Send the call again in that shape, "
+    "nothing else.")
+
+
 def stalled(prov: Provider, text: str, blocks: list[str], tools) -> bool:
-    """True for a reply from a provider with a nudge that offered tools, called none, and only narrates or declines."""
-    if not (prov.nudge and tools) or "DECISION:" in text:
+    """True for a reply that offered tools and called none, and either narrates/declines (providers with a `nudge`) or holds
+    JSON / the word tool_call without a readable call (any provider: a call missing its name or arguments)."""
+    if not tools or "DECISION:" in text or parse_reply(text, blocks, tools)[1]:
         return False
-    return not parse_reply(text, blocks, tools)[1] and bool(_STALL.search(text))
+    if prov.nudge and _STALL.search(text):
+        return True
+    return "tool_call" in text or any(True for _ in _json_objects(text)) or any(any(True for _ in _json_objects(b)) for b in blocks)
+
+
+def nudge_for(prov: Provider, text: str) -> str:
+    return prov.nudge if prov.nudge and _STALL.search(text) else NUDGE_MALFORMED
 
 
 class SiteFull(RuntimeError):
@@ -1203,8 +1216,9 @@ class Router:
                         # Prose where a tool call was due: say so ONCE in the same chat; the same again fails the provider
                         # over (the next one gets the work and the state block) instead of spending more chats on it.
                         self.log(f"shim: {key} answered without a tool call ({text.strip()[:160]!r}); nudging once")
+                        nudge = nudge_for(prov, text)
                         held, text = [], ""
-                        for ev in sess.ask(framed(prov, prov.nudge, False, tools), fresh=False, should_stop=should_stop):
+                        for ev in sess.ask(framed(prov, nudge, False, tools), fresh=False, should_stop=should_stop):
                             text = text + ev["t"] if "t" in ev else ev["reset"]
                             held.append(ev)
                         if should_stop and should_stop():

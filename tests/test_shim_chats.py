@@ -948,3 +948,19 @@ def test_a_compaction_summary_is_never_nudged():
     r = make_router("chatgpt", sess)
     events, calls = step(r, "chatgpt", msgs, TOOLS)
     assert len(sess.prompts) == 1 and not calls
+
+
+def test_any_provider_is_nudged_once_for_json_that_lacks_the_tool_name():
+    nameless = ('Code snippet\n{"content": "print(1)", "file_path": "scratch/r.py"}', [])
+    sess = ScriptSession([nameless, (CALL_TEXT, [BLOCK])])
+    r = make_router("gemini", sess)
+    events, calls = step(r, "gemini", convo(1), TOOLS)
+    assert calls and len(sess.prompts) == 2 and sess.fresh_flags == [True, False]
+    assert shim.NUDGE_MALFORMED in sess.prompts[1]
+    assert not any("Code snippet" in v for k, v in events if k == "t")
+    # still nameless after the nudge: the provider is failed over, not asked again
+    chat, gem = ScriptSession([nameless, nameless]), ScriptSession([(CALL_TEXT, [BLOCK])])
+    r = two_routers(chat, gem)
+    events, calls = step(r, "auto", convo(1), TOOLS)
+    assert calls and len(chat.prompts) == 2 and len(gem.prompts) == 1
+    assert [v for k, v in events if k == "provider"] == ["chatgpt", "gemini"]

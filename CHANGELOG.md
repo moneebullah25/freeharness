@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- The one-nudge guard now covers every provider for a reply that holds JSON (or the word `tool_call`) but no readable call, such as a call
+  missing its `name` (Gemini wrote `{"content": ..., "file_path": ...}`): one nudge in the same chat, then a fail-over.
 - New hunt check `output_not_invented`: a failure line shown in the candidate section (a traceback, `FAIL:`, an `...Error`, outside the
   `Actual:`-style field lines) must have been printed by a call of the stage. Found when a model pasted a `FAIL:` line that no run produced
   beside true lines from a clean run.
