@@ -45,7 +45,7 @@ Details that matter:
   titles (top 5, PRs first) back ONCE and asks for a one-line judgement per hit and a fresh `DECISION:` line, so a duplicate
   or competing PR is noticed. This is keyword overlap: it points, it does not decide.
 * **Duplicate / competing.** `duplicate:#N` or `competing:#N` drops the candidate; the model may pick ONE other candidate in the
-  same component (back to `hunt`, then `dupcheck` again; at most 2 candidates) or answer `DECISION: no_other_candidate`.
+  same component (back to `hunt`, then `dupcheck` again; at most 4 candidates) or answer `DECISION: no_other_candidate`.
   Otherwise the run ends **`blocked: duplicate`**: a legitimate outcome (the bug was already reported or fixed), not a harness failure.
   The exit code is 3 and the report says the later checklist items are unmet by design. A competing PR found by the gate at
   `gh_pr_create` ends the same way.
@@ -195,7 +195,7 @@ Staged workflow: `tests/test_oss_flow.py` (pure: stage helpers, prompt templates
 repair limits, blocking and `--resume` refusals) and `tests/test_oss_flow_dsh.py` (real dsh + real gate + fake GitHub + scripted
 model on free ports, never 8766): a correct script passes all six stages; skipped searches fail stage 3 and the stage-3 repair
 turn fixes it; an unrepairable stage ends `blocked at <stage>`; a fix without a failing run before it is refused; a hunt with no
-real repro is refused; a duplicate ends `blocked: duplicate` (after one or two candidates); the overlap review notices a competing
+real repro is refused; a duplicate ends `blocked: duplicate` (after one to four candidates); the overlap review notices a competing
 PR the model missed; killing the process mid-run and resuming continues at the right stage without re-running the earlier ones;
 live runs post only what the human approved and a rejection blocks instead of repairing.
 

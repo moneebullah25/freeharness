@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- A run may try up to four candidates (was two) before it ends `blocked: duplicate`: on a busy repository the first bugs a model finds
+  often have an open PR already.
 - The hunt check `repro_run` also accepts a bug of structure (a wrong parse tree: no error text, no number): a line of the `Actual:`
   block that the run printed verbatim and the `Expected:` block does not say. It was rejecting a real, correct reproduction.
 - The hunt check finds the candidate section by its number (`## Candidate 2: ...`), not by its position in the report: a model that

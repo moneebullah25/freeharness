@@ -39,7 +39,7 @@ from .eval import oss_stage as st
 from .transcript import Transcript
 
 STATE_VERSION = 1
-MAX_CANDIDATES = 2
+MAX_CANDIDATES = 4
 DUPLICATE = "blocked: duplicate"
 BLOCKED_EXIT = 3                    # a legitimate stop (duplicate / competing PR): neither a success nor a harness failure
 

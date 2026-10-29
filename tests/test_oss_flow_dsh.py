@@ -248,7 +248,10 @@ def test_the_hunt_needs_a_repro_run_that_really_shows_the_failure(world):
 # ======================================================================================= duplicates
 
 @needs_harness
-def test_a_duplicate_ends_blocked_duplicate_after_at_most_two_candidates(world):
+def test_a_duplicate_ends_blocked_duplicate_after_at_most_the_candidate_limit(world, monkeypatch):
+    from freeharness import oss_flow
+    assert oss_flow.MAX_CANDIDATES == 4
+    monkeypatch.setattr(oss_flow, "MAX_CANDIDATES", 2)                  # two candidates keep the scripted run short
     world.fake.add_item("up/proj", 12, "pr", "Handle empty list in average()", "return 0 for empty input, avoids division by zero")
     steps = (s_setup() + s_hunt() + s_dup(decision="DECISION: duplicate:#12")
              + [REPRO2, bash(REPORT2), DONE]                                       # candidate 2
