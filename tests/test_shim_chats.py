@@ -853,3 +853,23 @@ def test_the_state_block_survives_a_fit_that_drops_the_oldest_messages():
     step(r, "gemini", msgs)
     assert "State so far" in s.prompts[0] and len(s.prompts[0]) <= 6_400
     assert "earlier conversation omitted" in s.prompts[0]           # the fit really did drop messages
+
+
+def test_a_fresh_prompt_whose_newest_results_are_huge_is_squeezed_instead_of_refused():
+    """MEASURED live 2026-10-29: eight reads at once (64k chars) were the newest results and could not be trimmed: a 400,
+    dsh condensed in a new chat, and the run went on in another."""
+    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "go"}]
+    msgs.append({"role": "assistant", "content": None, "tool_calls": [
+        {"id": f"c{i}", "type": "function", "function": {"name": "read", "arguments": json.dumps({"file_path": f"f{i}.py"})}}
+        for i in range(8)]})
+    msgs += [{"role": "tool", "tool_call_id": f"c{i}", "content": f"HEAD{i}-" + "x" * 8000 + f"-TAIL{i}"} for i in range(8)]
+    full = len(shim.render_prompt(msgs, TOOLS_S))
+    out = shim.fit_messages(msgs, TOOLS_S, 20_000)
+    assert full > 64_000 and len(shim.render_prompt(out, TOOLS_S)) <= 20_000
+    assert all(f"HEAD{i}-" in shim.render_prompt(out, TOOLS_S) and f"-TAIL{i}" in shim.render_prompt(out, TOOLS_S) for i in range(8))
+    assert shim.fit_messages(msgs, TOOLS_S, None) is msgs                       # no limit known: untouched
+    s = ScriptSession()
+    r = make_router("gemini", s)
+    r.limits.data["gemini"] = {"confirmed": True, "known_good_chars": 20_000, "suspect_max_chars": 30_000, "updated": 1}
+    list(r.run("gemini", "", messages=msgs, tools=TOOLS_S))                  # no PromptTooLarge any more
+    assert s.fresh_flags == [True] and len(s.prompts[0]) <= r.hard_limit("gemini")

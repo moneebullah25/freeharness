@@ -68,6 +68,11 @@ releases may include breaking changes; they will be listed under **Changed**.
   pyproject.toml) when git already ignores that path: a plain clone of such a project (py7zr) failed at `import pkg` with
   "No module named 'pkg.version'" because only a build writes it. A path that is not gitignored is never written (it would show in a diff).
 
+- A fresh chat's prompt whose NEWEST tool results are huge (eight file reads at once: 64k chars) is now squeezed as a last resort: every result
+  keeps its start and end, all to the same cap, the largest that fits. Before, those results were never trimmed, the shim answered
+  400 "too large", dsh condensed the history in a new chat and the run went on in yet another: two chats for one batch of reads.
+  The state block is attached after the fit so it cannot be dropped with the oldest messages.
+
 ### Added
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
   label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,

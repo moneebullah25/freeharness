@@ -397,6 +397,26 @@ def dedupe_results(new_messages: list[dict], calls: dict, seen: dict) -> list[di
     return out if changed else new_messages
 
 
+SQUEEZE_CAPS = (20_000, 12_000, 8_000, 5_000, 3_000, 2_000, 1_200)
+
+
+def _squeeze_results(ms: list[dict], tools: list[dict] | None, budget: int) -> list[dict]:
+    """LAST RESORT for a fresh prompt that is still over `budget` after everything else: every tool result, the newest included,
+    keeps only its start and end, all to the same cap, the largest cap that fits. The alternative is a 'prompt too large' answer,
+    dsh condensing the history in a NEW chat, and the run going on in yet another (MEASURED live 2026-10-29: eight file reads
+    at once were 64k chars)."""
+    out = [dict(m) for m in ms]
+    results = [i for i, m in enumerate(out) if m.get("role") == "tool"]
+    original = {i: _text(ms[i].get("content")) for i in results}          # always cut from the original: _shorten leaves a
+    for cap in SQUEEZE_CAPS:                                                # result it already shortened alone
+        for i in results:
+            if len(original[i].strip()) > cap:
+                out[i]["content"] = _shorten(original[i], cap * 2 // 3, cap // 3)
+        if len(render_prompt(out, tools)) <= budget:
+            break
+    return out
+
+
 def fit_messages(messages: list[dict], tools: list[dict] | None, budget: int | None) -> list[dict]:
     """Shrink an over-long history so render_prompt() fits `budget` chars (None = no limit).
 
@@ -408,6 +428,7 @@ def fit_messages(messages: list[dict], tools: list[dict] | None, budget: int | N
          soon as it fits.
       2. Only if that is not enough: a protected result bigger than PROTECT_CAP is cut the same way.
       3. Only if that is not enough: the oldest WHOLE messages go (one marker is left behind).
+      4. Only if that is still not enough: every tool result, the newest too, keeps its start and end (`_squeeze_results`).
     Returns `messages` itself when it already fits; may still be too large (the router then reports
     context_length_exceeded so the harness can condense)."""
     if budget is None:
@@ -448,15 +469,15 @@ def fit_messages(messages: list[dict], tools: list[dict] | None, budget: int | N
             return keep + [{"role": "user", "content": DROPPED}] + rest[k:] + tail
         lo, hi = 1, len(rest)               # smallest number of oldest messages to drop that fits
         if rest and len(render_prompt(build(hi), tools)) > budget:
-            return build(hi)
+            return _squeeze_results(build(hi), tools, budget)
         while lo < hi:
             mid = (lo + hi) // 2
             if len(render_prompt(build(mid), tools)) <= budget:
                 hi = mid
             else:
                 lo = mid + 1
-        return build(lo) if rest else ms
-    return ms
+        return build(lo) if rest else _squeeze_results(ms, tools, budget)
+    return _squeeze_results(ms, tools, budget)
 
 
 # ------------------------------------------------------- sticky threads (see Router)
