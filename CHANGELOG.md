@@ -8,6 +8,9 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- A reply from ChatGPT that offers tools but only narrates the next step or says it cannot use them (no tool call) is answered once in the SAME chat
+  with a short nudge (`Provider.nudge`); a second such reply fails the provider over to the next one (`Stalled`, 30-minute cooldown, browser kept)
+  instead of spending more chats on it. Providers without a nudge, and requests without tools, are unchanged.
 - New chats are capped at 6 per provider per hour (`FREEHARNESS_MAX_NEW_CHATS_PER_HOUR`, 0 = no cap), counted in `<state>/chats.json` so a restart does
   not reset it; the shim logs a warning from the second new chat. A fresh chat gets a digest of older steps plus the newest 40 messages.
 - The `oss run` hunt stage now also requires `Documented:`, `Quote:`, `Intent checked:` and `Valid input because:` in the candidate

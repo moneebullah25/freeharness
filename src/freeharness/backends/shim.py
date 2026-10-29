@@ -762,11 +762,14 @@ class ProvidersFailed(Exception):
 
 
 # seconds a provider sits out after each kind of failure
-COOLDOWN = {"quota": 900, "login": 1800, "captcha": 1800, "broken": 1800, "timeout": 120, "error": 120}
+COOLDOWN = {"quota": 900, "login": 1800, "captcha": 1800, "broken": 1800, "timeout": 120, "error": 120,
+            "stalled": 1800}              # long: the work moves on, and a way back would open a new chat on the site that stalled
 
 
 def classify(exc: Exception) -> str:
     msg = str(exc).lower()
+    if isinstance(exc, Stalled):
+        return "stalled"
     if isinstance(exc, LookupError):
         return "broken"                   # selector no longer matches: the UI changed
     if "challeng" in msg or "captcha" in msg or "verification" in msg:
@@ -802,6 +805,25 @@ def parse_fault(spec):
         if key.strip() and n.strip().isdigit():
             out[key.strip()] = int(n)
     return out
+
+
+class Stalled(RuntimeError):
+    """A provider answered a request that needed a tool call with prose twice (the second time after a nudge)."""
+
+
+# A reply that narrates the next step or says the tools are out of reach, instead of calling one.
+_STALL = re.compile(
+    r"(?:\b(?:can(?:no|['’])?t|unable to|not able to|do(?:n['’]t| not) have)\b[^.\n]{0,100}"
+    r"\b(?:tools?|access|run|execute|complete|file ?system|interface)\b"
+    r"|\bnext,? (?:step|I)\b|\bI(?:['’]ll| will)\s+(?:now\s+)?(?:need to|inspect|read|run|check|start|reproduce|look|open|fix|write)\b"
+    r"|\bI need to\b)", re.I)
+
+
+def stalled(prov: Provider, text: str, blocks: list[str], tools) -> bool:
+    """True for a reply from a provider with a nudge that offered tools, called none, and only narrates or declines."""
+    if not (prov.nudge and tools) or "DECISION:" in text:
+        return False
+    return not parse_reply(text, blocks, tools)[1] and bool(_STALL.search(text))
 
 
 class SiteFull(RuntimeError):
@@ -1163,6 +1185,20 @@ class Router:
                     if self._reply_says_full(prov, text, blocks):
                         raise SiteFull(f"{prov.label} says the chat is full or the message too long: "
                                        f"{text.strip()[:120]!r}")
+                    if hold and stalled(prov, text, blocks, tools):
+                        # Prose where a tool call was due: say so ONCE in the same chat; the same again fails the provider
+                        # over (the next one gets the work and the state block) instead of spending more chats on it.
+                        self.log(f"shim: {key} answered without a tool call ({text.strip()[:160]!r}); nudging once")
+                        held, text = [], ""
+                        for ev in sess.ask(framed(prov, prov.nudge, False, tools), fresh=False, should_stop=should_stop):
+                            text = text + ev["t"] if "t" in ev else ev["reset"]
+                            held.append(ev)
+                        if should_stop and should_stop():
+                            self._orphan(key, sess, messages, tools, send_chars, plan, th_before, orp)
+                            return
+                        blocks = sess.code_blocks()
+                        if stalled(prov, text, blocks, tools):
+                            raise Stalled(f"{prov.label} answered twice without a tool call: {text.strip()[:160]!r}")
                     self.limits.good(key, send_chars)
                     page_full = key in self.sticky and self._page_full(sess)
                     for ev in held:

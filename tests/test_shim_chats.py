@@ -873,3 +873,58 @@ def test_a_fresh_prompt_whose_newest_results_are_huge_is_squeezed_instead_of_ref
     r.limits.data["gemini"] = {"confirmed": True, "known_good_chars": 20_000, "suspect_max_chars": 30_000, "updated": 1}
     list(r.run("gemini", "", messages=msgs, tools=TOOLS_S))                  # no PromptTooLarge any more
     assert s.fresh_flags == [True] and len(s.prompts[0]) <= r.hard_limit("gemini")
+
+
+# ------------------------------------------------------------ prose where a tool call was due: one nudge, then fail over
+
+NARRATE = ("The next step is to read the issue and run the repro. I can't complete those operations through the "
+           "tools available in this chat interface.", [])
+
+
+def two_routers(chatgpt, gemini):
+    sessions = {"chatgpt": chatgpt, "gemini": gemini}
+    return shim.Router(["chatgpt", "gemini"], lambda prov: sessions[prov.key], clock=Clock(), log=lambda m: None,
+                       sticky=["chatgpt", "gemini"])
+
+
+def test_a_narrating_reply_is_nudged_once_in_the_same_chat_and_the_tool_call_that_follows_is_used():
+    sess = ScriptSession([NARRATE, (CALL_TEXT, [BLOCK])])
+    r = make_router("chatgpt", sess)
+    events, calls = step(r, "chatgpt", convo(1), TOOLS)
+    assert calls and len(sess.prompts) == 2
+    assert sess.fresh_flags == [True, False]                   # the nudge went into the SAME chat
+    assert PROVIDERS["chatgpt"].nudge in sess.prompts[1]
+    assert not any("next step" in v for k, v in events if k == "t")        # the narration never reached the client
+    assert "chatgpt" in r.threads                               # the chat stays sticky for the next request
+
+
+def test_a_second_non_answer_fails_over_to_the_next_provider():
+    chat, gem = ScriptSession([NARRATE, NARRATE]), ScriptSession([(CALL_TEXT, [BLOCK])])
+    r = two_routers(chat, gem)
+    events, calls = step(r, "auto", convo(1), TOOLS)
+    assert calls and [v for k, v in events if k == "provider"] == ["chatgpt", "gemini"]
+    assert len(chat.prompts) == 2 and len(gem.prompts) == 1
+    assert r.until["chatgpt"] > r.clock() + 600 and not chat.closed     # a long pause, and its browser is not torn down
+    assert r.why["chatgpt"].startswith("stalled")
+
+
+def test_providers_without_a_nudge_and_replies_without_tools_are_left_alone():
+    sess = ScriptSession([NARRATE])
+    r = make_router("gemini", sess)
+    events, calls = step(r, "gemini", convo(1), TOOLS)
+    assert not calls and len(sess.prompts) == 1                  # Gemini has no nudge
+    sess = ScriptSession([NARRATE])
+    r = make_router("chatgpt", sess)
+    events, calls = step(r, "chatgpt", convo(1), None)            # no tools offered: prose is the answer
+    assert len(sess.prompts) == 1
+    sess = ScriptSession([("All done. DECISION: no_other_candidate. I'll stop here.", [])])
+    r = make_router("chatgpt", sess)
+    step(r, "chatgpt", convo(1), TOOLS)
+    assert len(sess.prompts) == 1                                # a stated decision is an answer
+
+
+def test_the_refusal_chatgpt_actually_gave_is_recognised_curly_apostrophe_and_all():
+    real = ("I need to inspect scratch/repro1.py and write reports/py7zr_issues.md. I can’t complete those filesystem "
+            "and GitHub operations through the tools available in this chat interface.\n\nSTAGE DONE")
+    assert shim.stalled(PROVIDERS["chatgpt"], real, [], TOOLS_S)
+    assert not shim.stalled(PROVIDERS["chatgpt"], "Report written to reports/x.md. STAGE DONE", [], TOOLS_S)

@@ -56,6 +56,8 @@ class Provider:
     tool_preamble: str = ""         # text put before the FIRST prompt of a chat when tools are offered, for a site whose
                                     # model insists it has no tools (it only looks at its own tool interface)
     tool_reminder: str = ""         # the same, one line, before each later message of that chat
+    nudge: str = ""                 # said once, in the same chat, when a reply that should have called a tool only narrates
+                                    # or says it cannot; a second such reply fails the provider over (shim.stalled)
     size_errors: tuple = ()         # generic-looking site errors known to mean "prompt too big" for this
                                     # site (a measured one); treated like a length signal
     consent: tuple = ()             # buttons to click away after load (best effort)
@@ -96,13 +98,18 @@ CHATGPT_TOOL_REMINDER = (
     "with no plan, no explanation and no question before or after them. A reply that only describes what you will do does "
     "nothing: the harness runs only the blocks. Write STAGE DONE only after the tools have really done the work.")
 
+CHATGPT_NUDGE = (
+    "That reply contained no tool_call block, so the harness did nothing. The tools in this chat ARE available and run on the "
+    "user's machine. Do not explain, plan or say you cannot: reply now with the next `tool_call` block(s) only, "
+    "in the JSON shape from the start of this chat.")
+
 CHATGPT = Provider(
     key="chatgpt", label="ChatGPT", url="https://chatgpt.com/",
     new_url="https://chatgpt.com/?model=auto",
     headless_ok=False,          # Cloudflare challenges headless even when logged in (2026-10-25): a visible window
     channel="chrome",           # its own profile (profiles/chatgpt), signed in with `freeharness login chatgpt`
     verified=True,
-    tool_preamble=CHATGPT_TOOL_PREAMBLE, tool_reminder=CHATGPT_TOOL_REMINDER,
+    tool_preamble=CHATGPT_TOOL_PREAMBLE, tool_reminder=CHATGPT_TOOL_REMINDER, nudge=CHATGPT_NUDGE,
     # MEASURED 2026-10-28: auto mode thinks before it answers: 90s was too short for a 7k-char tool result, and 240s
     # for a 1.7k-char one; some replies took 5+ minutes to appear.
     reply_timeout=600, answer_timeout=420,
