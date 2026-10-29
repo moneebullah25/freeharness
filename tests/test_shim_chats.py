@@ -934,3 +934,8 @@ def test_the_narrate_and_stop_reply_from_the_py7zr_hunt_is_recognised():
     said = ("The PPMd reproduction completed without an error. I'll use issue #398 as the candidate instead because its "
             "reported failure can be checked directly by writing a zero-byte file.\n\nSTAGE DONE")
     assert shim.stalled(PROVIDERS["chatgpt"], said, [], TOOLS_S)
+
+
+def test_a_couldnt_complete_refusal_is_recognised():
+    said = "I couldn\u2019t complete the required local file edits or reproduction run in this turn. The report is still missing."
+    assert shim.stalled(PROVIDERS["chatgpt"], said, [], TOOLS_S)

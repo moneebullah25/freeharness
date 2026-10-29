@@ -821,7 +821,7 @@ class Stalled(RuntimeError):
 
 # A reply that narrates the next step or says the tools are out of reach, instead of calling one.
 _STALL = re.compile(
-    r"(?:\b(?:can(?:no|['\u2019])?t|unable to|not able to|do(?:n['\u2019]t| not) have)\b[^.\n]{0,100}"
+    r"(?:\b(?:cannot|can['\u2019]?t|couldn['\u2019]?t|could not|unable to|not able to|do(?:n['\u2019]t| not) have)\b[^.\n]{0,100}"
     r"\b(?:tools?|access|run|execute|complete|file ?system|interface)\b"
     r"|\bnext,? (?:step|I)\b|\bI(?:['\u2019]ll| will)\s+(?:now |next |instead |first |then )*[a-z]{3,}\b"
     r"|\bI need to\b|\bI(?:['\u2019]m| am) going to\b|\bcan be checked by\b)", re.I)
