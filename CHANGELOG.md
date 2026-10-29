@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- `oss run` waits out a shim cooldown of ten minutes or less ("every provider is cooling down; next one frees up in Ns", three
+  waits per turn) and retries the same turn, instead of ending the stage `blocked: no model could finish the turn`.
 - On a second hunt candidate, `DECISION: no_other_candidate` is accepted at once only after the stage read two other issues; otherwise
   the model gets one repair turn telling it to list and read the open bug issues and try a reproduction before giving up (Gemini had
   ended a run after one text turn and no tool call).

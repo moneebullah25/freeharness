@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 from string import Template
 
@@ -147,6 +148,18 @@ DECISION: proceed | DECISION: duplicate:#N | DECISION: competing:#N"""
 
 CONTINUE = ("The previous model stopped before finishing this stage. Check your earlier tool results in this session, do not "
             "repeat finished work, and finish what is missing.\n")
+MAX_COOLDOWN_WAITS = 3
+MAX_COOLDOWN_SECONDS = 600
+
+
+def cooldown_wait(err: str) -> int:
+    """Seconds to wait when the shim answered 429 'every provider is cooling down; next one frees up in Ns' (0 if it did not,
+    or the wait is longer than MAX_COOLDOWN_SECONDS)."""
+    m = re.search(r"every provider is cooling down; next one frees up in (\d+)s", err or "")
+    n = int(m.group(1)) + 5 if m else 0
+    return n if 0 < n <= MAX_COOLDOWN_SECONDS else 0
+
+
 NO_OTHER_CHALLENGE = ("You said there is no other candidate, but this stage read fewer than two other issues and ran no reproduction. "
                       "That is not enough to give up. List the open bug issues again (gh_list_issues, label bug), read at least two "
                       "you have not tried (not the dropped candidate), and try to reproduce one with real code. Only if none "
@@ -319,6 +332,7 @@ class Flow:
         original, cur = prompt, prompt
         guard = loopguard.enabled(self.loop_guard)         # ON unless --no-loop-guard / FREEHARNESS_LOOP_GUARD=0
         watch, loops = loopguard.Watch(), 0
+        waits = 0
         while True:
             left = (self.max_steps - self.steps) if self.max_steps else None
             if self.max_steps and left <= 0:
@@ -382,6 +396,14 @@ class Flow:
                         self.note(f"{stage.id}: the step budget of this turn ended; the harness checks what was done")
                     return res
                 err = json.dumps(res.reason)[:300]
+            wait = cooldown_wait(err)
+            if wait and waits < MAX_COOLDOWN_WAITS:
+                waits += 1
+                self.note(f"{stage.id}: every provider is cooling down; waiting {wait}s and retrying the same turn "
+                          f"({waits}/{MAX_COOLDOWN_WAITS})")
+                time.sleep(wait)
+                cur = CONTINUE + original
+                continue
             if self.state["model_idx"] + 1 < len(self.models):
                 self.state["model_idx"] += 1
                 nxt = self.models[self.state["model_idx"]]

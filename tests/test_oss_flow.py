@@ -461,3 +461,11 @@ def test_a_failure_that_is_not_the_one_actual_names_does_not_prove_the_claim():
     assert sig == "" and "IndexError" in prob and "different behaviour" in prob
     assert st.failure_signal(tb, "", "raises ParserMatchError instead of returning")[0]      # the named error is the one shown
     assert st.failure_signal(tb, "", "it breaks")[0]                                       # no class named: the traceback stands
+
+
+def test_a_short_provider_cooldown_is_waited_out_not_treated_as_a_failed_model():
+    msg = '429: {"message":"every provider is cooling down; next one frees up in 118s","type":"rate_limit_error"}'
+    assert oss_flow.cooldown_wait(msg) == 123
+    assert oss_flow.cooldown_wait(msg.replace("118s", "5000s")) == 0       # too long to sit through: fail over / stop
+    assert oss_flow.cooldown_wait("Gemini shows a notice and no reply started") == 0
+    assert oss_flow.cooldown_wait("") == 0
