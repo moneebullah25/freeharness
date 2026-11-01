@@ -35,10 +35,14 @@ class Transcript:
         new = not self.path.exists()
         fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         self._f = os.fdopen(fd, "a", encoding="utf-8")
+        self.redact = False                         # set by the oss Recorder: scrub secrets from what is written
         if new:
             self._w(f"# Session {session_id}\n\nworkspace: `{cwd}`  \nstarted: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
     def _w(self, text: str):
+        if self.redact:
+            from .redact import redact
+            text = redact(text)
         self._f.write(text + "\n")
         self._f.flush()
 

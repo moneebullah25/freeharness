@@ -95,6 +95,14 @@ releases may include breaking changes; they will be listed under **Changed**.
   The state block is attached after the fit so it cannot be dropped with the oldest messages.
 
 ### Added
+- `freeharness review oss show <run>`: one plain-text page with the repo, candidate section, repro command and its recorded output, dupcheck
+  (searches, decision, hits compared), issue draft, fix (branch, files, diffstat, commits), PR draft, per-stage evidence and dropped candidates;
+  a draft of a dropped candidate, or of a blocked or unfinished run, is marked DO NOT APPROVE. Read-only.
+- `src/freeharness/redact.py`: `redact(text)` for GitHub tokens, API keys, Bearer/`Authorization:` values, private-key blocks, `*_KEY/_TOKEN/_SECRET/PASSWORD`
+  assignments and e-mail addresses; applied to oss `calls.jsonl`, `supervisor.jsonl`, stage logs, reviews and the run transcript.
+- `freeharness prune --older-than DAYS [--keep-reports] [--all] [--force] [--no-dry-run]`: retention for oss run directories (workspace first, then
+  transcripts and call logs; reports and state kept unless `--all`); a running run or one with an undecided draft is never touched without `--force`;
+  it only prints the plan unless `--no-dry-run`.
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
   label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,
   and the usual dupcheck, fix and PR stages follow. No new issue is filed (the issue stage adopts the existing one). New checks:
