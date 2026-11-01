@@ -806,6 +806,9 @@ def code_fingerprint() -> str:
     return h.hexdigest()[:16]
 
 
+LOADED_CODE = code_fingerprint()      # fixed when this process started: /health must report what is LOADED, not what is on disk now
+
+
 def parse_fault(spec):
     """FREEHARNESS_FAULT="gemini:3" makes gemini's 3rd request fail with a quota error, so failover
     can be exercised live without waiting for a real limit. Unset in normal use."""
@@ -1523,7 +1526,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"object": "list", "data": [
                 {"id": i, "object": "model", "owned_by": "shim"} for i in ids]})
         elif path == "/health":
-            self._send_json({"ok": True, "providers": self.router.status(), "pid": os.getpid(), "code": code_fingerprint()})
+            self._send_json({"ok": True, "providers": self.router.status(), "pid": os.getpid(), "code": LOADED_CODE})
         else:
             self.send_error(404)
 

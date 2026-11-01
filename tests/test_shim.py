@@ -889,3 +889,19 @@ def test_a_made_up_tool_in_the_tool_key_shape_goes_to_dsh_so_the_model_hears_tha
     assert json.loads(calls[0]["function"]["arguments"]) == {"command": "ls"}
     # prose that merely has a "tool" key is not forwarded
     assert shim.parse_reply('{"tool": "hammer", "weight": 3}', ['{"tool": "hammer", "weight": 3}'], TOOLS)[1] == []
+
+
+def test_health_reports_the_code_the_process_loaded_not_what_is_on_disk_now(monkeypatch):
+    """A shim started before a fix kept answering /health with the hash of the CURRENT files, so `ensure_shim` never saw it as stale
+    and every later run reused the old code (found 2026-11-01: a shim from 09:16 served runs until 11:54)."""
+    srv, base = serve_with({"gemini": FakeSession()})
+    shim.Handler.token = "s3cret-" + "x" * 32
+    good = {"Authorization": "Bearer " + shim.Handler.token}
+    try:
+        before = _get(base + "/health", good)[1]["code"]
+        assert before == shim.LOADED_CODE
+        monkeypatch.setattr(shim, "code_fingerprint", lambda: "the-files-changed-on-disk")    # an upgrade lands while it runs
+        after = _get(base + "/health", good)[1]["code"]
+        assert after == before != shim.code_fingerprint(), "/health must keep reporting the loaded code, so the shim reads as stale"
+    finally:
+        srv.shutdown()

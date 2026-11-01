@@ -33,6 +33,9 @@ releases may include breaking changes; they will be listed under **Changed**.
   final error no longer claims "every provider says the prompt/chat is too long".
 
 ### Changed
+- `/health` reports the code fingerprint the shim LOADED at startup, not the hash of the files on disk at the time of the request. It used to
+  answer with the current files' hash, so a shim started before a fix never looked stale and was reused by every later run (the bridge wait, the
+  error classes and the provider record were not live for hours).
 - The wait for a reply to START keeps going while the page shows it is generating (stop button), up to 3 x `reply_timeout`. Qwen was thinking
   at 420 s, the shim gave up and failed over, and the work was thrown away. A page that is not generating still times out as before.
 - The hunt must leave the clone's tracked files unmodified (new check `clone_untouched`): a model that patched the project's `__init__`
