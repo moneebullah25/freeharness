@@ -744,6 +744,9 @@ def render_report(run_dir, result: dict | None = None, assessment: dict | None =
     drafts = read_drafts(rd)
     out += ["", f"{h}Drafts the gate accepted", ""]
     out += [f"- {d['action']} on {d['repo']} ({d['mode']}), saved as ghgate/drafts/{d['id']}.md" for d in drafts] or ["- none"]
+    if state.get("stages"):
+        from .. import oss_health
+        out += ["", oss_health.render(oss_health.compute(rd.path), markdown=markdown)]
     out += ["", f"{h}Timeline", ""]
     out += (["    " + r for r in timeline(rd)] if not markdown else ["```text"] + timeline(rd) + ["```"])
     out += ["", f"files: {rd.path}"]
@@ -753,6 +756,9 @@ def render_report(run_dir, result: dict | None = None, assessment: dict | None =
 def write_report(run_dir, **kw) -> Path:
     rd = RunDir(run_dir)
     rd.report.write_text(render_report(rd.path, markdown=True, **kw), encoding="utf-8")
+    if _json(rd.state).get("stages"):
+        from .. import oss_health
+        oss_health.write(rd.path)                       # health.json beside report.md
     return rd.report
 
 

@@ -15,6 +15,10 @@ releases may include breaking changes; they will be listed under **Changed**.
 - `freeharness oss hints owner/name --clone DIR`: deterministic hunt starting points (churn, untested modules, bug-fix areas, minus
   directories with 2+ open PRs) computed from the clone by `hunt_hints.py`. The staged hunt prompt carries them as "Suggested starting
   points (pick one or ignore them)" when the model picks the component. Acceptance checks are unchanged.
+- `freeharness oss watch <run|latest>` follows a staged OSS run live (one line per tool call, stage and note lines, an ALERT after 240s of
+  silence), exits when the run's outcome is final or its pid is gone, and prints a summary (tool calls, errors by class, repair turns, models).
+- `freeharness oss report` has a "Run health" section and writes `health.json`: steps per stage, tool errors by class, repair turns, model
+  failovers and cooldown waits, wasted steps and the unmet checks per acceptance round, all derived from the run's existing files.
 
 ### Changed
 - The hunt must leave the clone's tracked files unmodified (new check `clone_untouched`): a model that patched the project's `__init__`

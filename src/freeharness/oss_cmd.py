@@ -684,6 +684,8 @@ def main(argv=None) -> int:
     h = sub.add_parser("hints", help="preview the suggested hunt starting points for a local clone (no network)")
     h.add_argument("repo", help="owner/name")
     h.add_argument("--clone", metavar="DIR", help="local clone to analyse (required)")
+    w = sub.add_parser("watch", help="follow a running run live: one line per tool call, stall alert, closing summary")
+    w.add_argument("run", help="run id, a unique prefix, 'latest', or the run directory")
     sub.add_parser("list", help="past runs")
     a = ap.parse_args(argv)
     if a.cmd == "run":
@@ -695,6 +697,13 @@ def main(argv=None) -> int:
         return cmd_report(a)
     if a.cmd == "hints":
         return cmd_hints(a)
+    if a.cmd == "watch":
+        from . import oss_watch
+        try:
+            return oss_watch.watch(resolve_run(a.run))
+        except OssError as e:
+            print(e, file=sys.stderr)
+            return 2
     return cmd_list()
 
 
