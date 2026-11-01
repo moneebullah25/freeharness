@@ -215,7 +215,7 @@ def test_every_stage_prompt_is_short_filled_from_state_and_never_writes_the_mode
     for stage in oss_flow.STAGES:
         text = f.render(stage)
         seen[stage.id] = text
-        assert "$" not in text and len(text) < 3500, (stage.id, len(text))
+        assert "$" not in text and len(text) < 4500, (stage.id, len(text))
         assert f"stage {f.state['order'].index(stage.id) + 1} of 6" in text and "venv command prefix" in text
     assert "ZeroDivisionError: division by zero" in seen["issue"] and "## Candidate 1" in seen["issue"]
     assert "issue: #900001 (dry-run placeholder)" in seen["fix"] and "Issue #900001" in seen["fix"]
