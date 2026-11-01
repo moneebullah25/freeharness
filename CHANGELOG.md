@@ -7,6 +7,11 @@ releases may include breaking changes; they will be listed under **Changed**.
 
 ## [Unreleased]
 
+### Added
+- `freeharness oss hints owner/name --clone DIR`: deterministic hunt starting points (churn, untested modules, bug-fix areas, minus
+  directories with 2+ open PRs) computed from the clone by `hunt_hints.py`. The staged hunt prompt carries them as "Suggested starting
+  points (pick one or ignore them)" when the model picks the component. Acceptance checks are unchanged.
+
 ### Changed
 - The hunt check `repro_run` needs the run output to show the exception class the `Actual:` line names: a different traceback (a clean
   `ParserMatchError` where the report claims `IndexError`) is a different behaviour and does not show the claim.

@@ -604,6 +604,19 @@ def cmd_report(a) -> int:
     return 0 if assessment["success"] else 1
 
 
+def cmd_hints(a) -> int:
+    from . import hunt_hints
+    if not a.clone:
+        print(f"hints for {a.repo} are computed from a local clone: pass --clone DIR (no network is used)", file=sys.stderr)
+        return 2
+    if not Path(a.clone).is_dir():
+        print(f"not a directory: {a.clone}", file=sys.stderr)
+        return 2
+    hints = hunt_hints.safe_hints(a.clone)
+    print(hunt_hints.render_hints(hints) if hints else "no suggestions (no git history or source files found)")
+    return 0
+
+
 def cmd_list() -> int:
     root = oss_root()
     runs = sorted((d for d in root.iterdir() if (d / "config.json").is_file()), reverse=True) if root.is_dir() else []
@@ -651,6 +664,9 @@ def main(argv=None) -> int:
     q = sub.add_parser("report", help="timeline, checklist and assessment of a run; writes report.md")
     q.add_argument("run", help="run id, a unique prefix, 'latest', or the run directory")
     q.add_argument("--judge", action="store_true", help="also ask the advisory LLM judge (one message; cannot change the result)")
+    h = sub.add_parser("hints", help="preview the suggested hunt starting points for a local clone (no network)")
+    h.add_argument("repo", help="owner/name")
+    h.add_argument("--clone", metavar="DIR", help="local clone to analyse (required)")
     sub.add_parser("list", help="past runs")
     a = ap.parse_args(argv)
     if a.cmd == "run":
@@ -660,6 +676,8 @@ def main(argv=None) -> int:
         return cmd_run(a, Console())
     if a.cmd == "report":
         return cmd_report(a)
+    if a.cmd == "hints":
+        return cmd_hints(a)
     return cmd_list()
 
 
