@@ -16,6 +16,7 @@ freeharness: a terminal coding agent (DeepSeek Harness) on free web-chat backend
     freeharness memory ...           long-term memory: list | add | search | forget | extract | export | wipe
     freeharness agents ...           open-source agent skills: install [--set oss|all] | list | remove
     freeharness oss run|report|list  OSS-contribution evaluation on a real repo (dry-run by default; --live posts after you approve)
+    freeharness providers status     per-provider chat budget, cooldown, last error and tool-call record
     freeharness version
 """
 from __future__ import annotations
@@ -24,7 +25,7 @@ import sys
 
 from . import __version__
 
-SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "review", "vault", "github", "transcript", "memory", "sessions", "agents", "oss", "toolchain", "version")
+SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "review", "vault", "github", "transcript", "memory", "sessions", "agents", "oss", "toolchain", "providers", "version")
 
 
 def main(argv=None) -> int:
@@ -63,6 +64,9 @@ def main(argv=None) -> int:
         return run(rest)
     if cmd == "toolchain":
         from .toolchain import main as run
+        return run(rest)
+    if cmd == "providers":
+        from .providers_cmd import main as run
         return run(rest)
     if cmd == "doctor":
         from .doctor import main as run

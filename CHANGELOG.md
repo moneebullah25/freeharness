@@ -19,6 +19,16 @@ releases may include breaking changes; they will be listed under **Changed**.
   silence), exits when the run's outcome is final or its pid is gone, and prints a summary (tool calls, errors by class, repair turns, models).
 - `freeharness oss report` has a "Run health" section and writes `health.json`: steps per stage, tool errors by class, repair turns, model
   failovers and cooldown waits, wasted steps and the unmet checks per acceptance round, all derived from the run's existing files.
+- `freeharness providers status`: per provider, new chats used this hour of the cap, cooldown left, last error class, whether it
+  recently Stalled, and its tool-call record (replies with a tool call vs nudged/Stalled). The shim keeps these in
+  `provider_health.json` (atomic writes) beside `chats.json` and `limits.json`.
+- On failover with the order `auto`, the shim tries the provider with the better recent tool-call record first (after the first
+  choice); an explicit `--models` order is never changed.
+
+### Fixed
+- A site's error page ("I encountered an error doing what you asked", "I'm having a hard time fulfilling your request") on a small
+  fresh prompt is now a `provider_error`, not `too_long`: it no longer writes a bogus `suspect_max_chars` to `limits.json`, and the
+  final error no longer claims "every provider says the prompt/chat is too long".
 
 ### Changed
 - The hunt must leave the clone's tracked files unmodified (new check `clone_untouched`): a model that patched the project's `__init__`

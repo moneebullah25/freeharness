@@ -47,6 +47,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from .. import auth, paths
+from .health import Health
+from .health import default_path as health_path
 from .limits import NO_LIMIT, Limits
 from .limits import default_path as limits_path
 from .providers import ELIGIBLE, PROVIDERS, Provider, resolve
@@ -853,6 +855,12 @@ def nudge_for(prov: Provider, text: str) -> str:
     return prov.nudge if prov.nudge and _STALL.search(text) else NUDGE_MALFORMED
 
 
+# A site's own error page; never a size statement. On a prompt that is not big it is a provider failure.
+PROVIDER_ERROR_WORDS = ("i encountered an error doing what you asked", "i seem to be encountering an error",
+                        "having a hard time fulfilling")
+SMALL_PROMPT = 20_000        # chars: a prompt this small (or one the site already answered) is not what broke it
+
+
 class SiteFull(RuntimeError):
     """The site answered with its own "this chat is full / the message is too long" notice."""
 
@@ -868,7 +876,7 @@ class Router:
     assumed: they are learned from failures (limits.Limits)."""
 
     def __init__(self, keys, make_session, clock=time.monotonic, log=None, sticky=(), limits=None,
-                 debug_prompts=None, chats_path=None):
+                 debug_prompts=None, chats_path=None, health=None):
         self.keys = list(keys)
         self.make_session = make_session      # (Provider) -> Session-like
         self.clock = clock
@@ -885,6 +893,7 @@ class Router:
         self.fault = parse_fault(os.environ.get("FREEHARNESS_FAULT"))   # test hook: {provider: Nth request fails}
         self.requests: dict[str, int] = {}
         self.new_chats: dict[str, list[float]] = {}     # when each provider's chats were started (the last hour)
+        self.health = health if health is not None else Health()   # in memory unless the caller gives it a path
         self.chats_path = chats_path                    # if set, that count survives a shim restart (wall-clock times)
         self.wall = time.time
         self.debug_prompts = debug_prompts if debug_prompts is not None else os.environ.get("SHIM_DEBUG_PROMPTS")
@@ -898,15 +907,30 @@ class Router:
                     "sticky": k in self.sticky,
                     "limits": self.limits.snapshot(k)} for k in self.keys}
 
+    def error_class(self, prov: Provider, exc, send_chars: int, fresh: bool, site_full: bool = False) -> str | None:
+        """"provider_error" when the error is the site's vague error page on a prompt that is not big (small, or no
+        larger than something it already answered); "too_long" when the site or the error says the text is too long;
+        None otherwise. Only "too_long" may teach the limits ledger anything."""
+        if isinstance(exc, SiteFull) or site_full:
+            return "too_long"
+        msg = str(exc).lower()
+        page_error = any(m in msg for m in (*prov.size_errors, *PROVIDER_ERROR_WORDS))
+        explicit = any(m in msg for m in (*prov.full_markers, *LENGTH_WORDS))
+        small = send_chars <= max(SMALL_PROMPT, self.limits.snapshot(prov.key)["known_good_chars"])
+        if page_error and not explicit and fresh and small:
+            return "provider_error"
+        return "too_long" if self._length_looking(prov, exc) else None
+
     def _session(self, key):
         if key not in self.sessions:
             self.sessions[key] = self.make_session(PROVIDERS[key])
         return self.sessions[key]
 
-    def _cool(self, key, kind, exc):
+    def _cool(self, key, kind, exc, cls=None):
         self.threads.pop(key, None)
         self.until[key] = self.clock() + COOLDOWN[kind]
         self.why[key] = f"{kind}: {str(exc)[:120]}"
+        self.health.error(key, cls or kind, COOLDOWN[kind])
         # a wedged browser must not be reused after a hard failure
         if kind in ("captcha", "broken", "error", "timeout"):
             sess = self.sessions.pop(key, None)
@@ -1148,6 +1172,10 @@ class Router:
             if not ready:
                 raise AllCoolingDown(min(self.until.get(k, now) for k in fits) - now)
 
+        if model in ("auto", "", None):
+            # failover prefers the provider whose replies held a tool call more often; the first stays first, and an
+            # explicit provider (--models) is never reordered
+            ready = ready[:1] + sorted(ready[1:], key=lambda k: -self.health.score(k))
         last = None
         length_failures = 0
         for key in ready:
@@ -1158,7 +1186,7 @@ class Router:
             fresh, send, plan = True, "", None
             same_retry = False
             for attempt in (0, 1, 2):
-                asked = adopting = hold = False
+                asked = adopting = hold = nudged = False
                 orp, send_chars = None, 0
                 try:
                     sess = self._session(key)
@@ -1217,6 +1245,7 @@ class Router:
                         # over (the next one gets the work and the state block) instead of spending more chats on it.
                         self.log(f"shim: {key} answered without a tool call ({text.strip()[:160]!r}); nudging once")
                         nudge = nudge_for(prov, text)
+                        nudged = True
                         held, text = [], ""
                         for ev in sess.ask(framed(prov, nudge, False, tools), fresh=False, should_stop=should_stop):
                             text = text + ev["t"] if "t" in ev else ev["reset"]
@@ -1226,8 +1255,12 @@ class Router:
                             return
                         blocks = sess.code_blocks()
                         if stalled(prov, text, blocks, tools):
+                            self.health.outcome(key, "s")
                             raise Stalled(f"{prov.label} answered twice without a tool call: {text.strip()[:160]!r}")
                     self.limits.good(key, send_chars)
+                    self.health.success(key)
+                    if hold and tools and not is_compaction(messages) and parse_reply(text, blocks, tools)[1]:
+                        self.health.outcome(key, "n" if nudged else "t")
                     page_full = key in self.sticky and self._page_full(sess)
                     for ev in held:
                         started = True
@@ -1259,7 +1292,8 @@ class Router:
                         # the message is in the chat and the site is just slow: the retry waits for that answer
                         self._orphan(key, sess, messages, tools, send_chars, plan, th_before, orp)
                     site_full = sess is not None and self._page_full(sess)
-                    length = self._length_looking(prov, e) or site_full
+                    cls = self.error_class(prov, e, len(send), fresh, site_full)
+                    length = cls == "too_long"
                     if (not fresh and not same_retry and th_before is not None and not length
                             and any(m in str(e).lower() for m in prov.transient_errors)):
                         # "something went wrong, try again": try again in the SAME chat, once; never a new chat for it
@@ -1288,10 +1322,10 @@ class Router:
                                          f"retrying in a new chat with {len(smaller):,}")
                                 force_fresh = True
                                 continue
-                    kind = "error" if length else classify(e)
+                    kind = "error" if cls else classify(e)
                     length_failures += 1 if length else 0
                     self.log(f"shim: {key} failed ({kind}): {str(e)[:600]}")
-                    self._cool(key, kind, e)
+                    self._cool(key, kind, e, cls)
                     last = e
                     break
         if length_failures and length_failures == len(ready):
@@ -1725,7 +1759,8 @@ def serve(host, port, keys, headless, sticky=()):
         return root.tab(prov)
 
     Handler.router = Router(keys, make, sticky=sticky, limits=Limits(limits_path()),
-                            chats_path=paths.state_dir() / "chats.json")
+                            chats_path=paths.state_dir() / "chats.json",
+                            health=Health(health_path()))
     Handler.token = None if os.environ.get("FREEHARNESS_NO_AUTH") else auth.load_or_create_token()
     Handler.worker = Worker()
     srv = ThreadingHTTPServer((host, port), Handler)
