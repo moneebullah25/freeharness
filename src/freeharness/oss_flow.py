@@ -32,7 +32,7 @@ import time
 from dataclasses import dataclass
 from string import Template
 
-from . import loopguard, oss_cmd, paths, sessions
+from . import hunt_hints, loopguard, oss_cmd, paths, sessions
 from .client import rpc
 from .eval import oss_judge as oj
 from .eval import oss_stage as st
@@ -283,6 +283,8 @@ class Flow:
                 if self.state["component"] else
                 (f"Stay in the component you chose: {s['component']}." if s["component"] else
                  "Pick ONE small component yourself (one module or package) and name it on the report line `Component reviewed:`."))
+        if not self.from_issues and not self.state["component"]:
+            comp = (comp + "\n" + hunt_hints.prompt_line(s.get("hints"))).rstrip()
         if self.from_issues:
             comp = ((f"Only consider issues about `{s['component']}` (a directory or module of the repo)."
                      if s["component"] else
@@ -475,6 +477,8 @@ class Flow:
         clone, reg = st.find_clone(self.rd, self.repo)
         if clone:
             s["clone"] = os.path.relpath(clone, self.rd.workspace)
+            if "hints" not in s:
+                s["hints"] = hunt_hints.safe_hints(clone)
             s["default_branch"] = reg.get("default_branch", s["default_branch"])
         c = self.cand()
         if stage.id == "hunt":

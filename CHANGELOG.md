@@ -12,6 +12,9 @@ releases may include breaking changes; they will be listed under **Changed**.
   new-chat cap; warns on one model at the cap or not signed in. `--no-preflight` skips it. The cap itself is untouched.
 - `gh_setup_env` tries `import <project>` in the sandbox after building the venv and says so loudly when it fails (an environment
   problem: do not patch the project).
+- `freeharness oss hints owner/name --clone DIR`: deterministic hunt starting points (churn, untested modules, bug-fix areas, minus
+  directories with 2+ open PRs) computed from the clone by `hunt_hints.py`. The staged hunt prompt carries them as "Suggested starting
+  points (pick one or ignore them)" when the model picks the component. Acceptance checks are unchanged.
 
 ### Changed
 - The hunt must leave the clone's tracked files unmodified (new check `clone_untouched`): a model that patched the project's `__init__`
