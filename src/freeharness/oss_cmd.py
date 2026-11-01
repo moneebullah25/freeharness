@@ -526,6 +526,17 @@ explicit approval. Rules enforced in code stay on: no force pushes, no default-b
 an issue, competing-PR check, no attribution markers, no artifact files."""
 
 
+def _preflight(models: list[str], live: bool) -> bool:
+    """Print the preflight rows; False (refuse to start) when one is a FAIL."""
+    from . import preflight
+    rows = preflight.check(models, live)
+    print("preflight:\n" + preflight.render(rows))
+    bad = preflight.failures(rows)
+    if bad:
+        print(f"refusing to start: {len(bad)} preflight check(s) failed (--no-preflight skips them)", file=sys.stderr)
+    return not bad
+
+
 def cmd_run(a, console) -> int:
     from .client.cli import MODELS
     tty = sys.stdin.isatty() and sys.stdout.isatty()
@@ -560,6 +571,8 @@ def cmd_run(a, console) -> int:
         if bad:
             print(f"unknown model(s) {bad}; choose from {', '.join(MODELS)}", file=sys.stderr)
             return 2
+        if a.preflight and not _preflight(named or list(cfg.get("models") or []), bool(cfg.get("live"))):
+            return 2
         code, _ = resume_run(rd, a.no_shim, a.providers, factory if tty else None, console, repair=a.repair,
                              turn_timeout=a.turn_timeout, max_steps=a.max_steps, models=named or None)
         return code
@@ -570,6 +583,8 @@ def cmd_run(a, console) -> int:
     bad = [m for m in models if m not in MODELS]
     if bad:
         print(f"unknown model(s) {bad}; choose from {', '.join(MODELS)}", file=sys.stderr)
+        return 2
+    if a.preflight and not _preflight(models, a.live):
         return 2
     if a.live:
         print(LIVE_NOTE)
@@ -645,6 +660,8 @@ def main(argv=None) -> int:
                    "stage, on the same dsh session and workspace")
     p.add_argument("--providers", default="", help="providers for a shim this command starts (default: from --models)")
     p.add_argument("--no-shim", action="store_true", help="do not start or check the shim")
+    p.add_argument("--no-preflight", dest="preflight", action="store_false",
+                   help="skip the checks that run first (sandbox, new-chat budget, sign-ins)")
     p.add_argument("--no-loop-guard", dest="loop_guard", action="store_false",
                    help="turn the loop guard off (also FREEHARNESS_LOOP_GUARD=0). On by default: end a turn in which the same tool call returned the "
                         "same output 3+ times in the last 8 calls and send a repair turn asking for a different next action")

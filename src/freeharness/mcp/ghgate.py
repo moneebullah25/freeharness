@@ -859,6 +859,35 @@ class Gate:
         return (f"note: wrote a metadata stub so importlib.metadata.version({name!r}) works ({ver}); the project's code itself is still "
                 "imported from PYTHONPATH, not installed.")
 
+    def _import_probe(self, rd: Path, ref: str, py: str, src_dirs: list[str]) -> str:
+        """Does `import <project>` work in the sandbox with the prefix the model will use? '' when there is no package to try.
+        A failure is reported as an ENVIRONMENT problem, so a model does not patch the project or hunt the disk for the module."""
+        name, _ = depfiles.project_identity(self._tree_reader(rd, ref)("pyproject.toml") or "")
+        mods = []
+        for d in src_dirs:
+            base = Path(d)
+            if base.is_dir():
+                mods += [e.name for e in sorted(base.iterdir()) if e.is_dir() and (e / "__init__.py").is_file()
+                         and e.name.isidentifier() and e.name not in ("tests", "test", "docs", "docs_src", "examples", "scripts", "benchmarks")]
+        want = depfiles.norm(name).replace("-", "_") if name else ""
+        mod = want if want in mods else (mods[0] if mods else "")
+        if not mod:
+            return ""
+        cmd = (f"cd {shlex.quote(str(rd))} && PYTHONDONTWRITEBYTECODE=1 PYTHONPATH={shlex.quote(':'.join(src_dirs))} "
+               f"{shlex.quote(py)} -c {shlex.quote('import ' + mod)}")
+        try:
+            r = security._run_confined(cmd, self.cfg.workdir, timeout=90)
+            ok, err = r.returncode == 0, (r.stderr or r.stdout or "").strip()
+        except (OSError, subprocess.SubprocessError) as e:
+            ok, err = False, str(e)
+        self._log("import_probe", repo_dir=str(rd), module=mod, ok=ok)
+        if ok:
+            return f"import check: `import {mod}` works in the sandbox with the command prefix below."
+        last = err.splitlines()[-1][:200] if err else "no output"
+        return (f"WARNING: `import {mod}` FAILS in this environment: {last}. This is an environment problem, not a bug in the project: "
+                "do NOT edit the project to get past it and do not search the disk for the module; run `gh_setup_env` again after "
+                "reading what it says, or tell the human what is missing.")
+
     def _extras(self, extras) -> set[str]:
         if not isinstance(extras, str):
             raise Refuse("extras must be text: names separated by commas, for example 'test,lint'")
@@ -1009,6 +1038,7 @@ class Gate:
             out, err = "", str(e)
         usable = [ln[3:].replace("_", "-") for ln in out.splitlines() if ln.startswith("ok:")]
         pp = ":".join(self._src_dirs(rd))
+        imp = self._import_probe(rd, ref, py, self._src_dirs(rd)) if out.startswith("python") else ""
         prefix = f"PYTHONDONTWRITEBYTECODE=1 PYTHONPATH={pp} {py} -m"
         self._log("setup_env", repo=up, venv=str(venv), requirements=len(col.reqs), cached=cached, skipped=len(col.skipped),
                   toolchain=tstat)
@@ -1023,6 +1053,8 @@ class Gate:
             lines.append(placeholder)
         if stub:
             lines.append(stub)
+        if imp:
+            lines.append(imp)
         lines.append("tools that run here: " + (", ".join(usable) or "none") +
                      ("" if usable else "  (none declared by the repo and no standard toolchain: python -m unittest still works)"))
         if tstat != "full":

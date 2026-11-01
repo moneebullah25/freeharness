@@ -7,6 +7,12 @@ releases may include breaking changes; they will be listed under **Changed**.
 
 ## [Unreleased]
 
+### Added
+- Preflight for `freeharness oss run` (and `--resume`): refuses to start when the bash sandbox is not `full`, or when every named model is at its
+  new-chat cap; warns on one model at the cap or not signed in. `--no-preflight` skips it. The cap itself is untouched.
+- `gh_setup_env` tries `import <project>` in the sandbox after building the venv and says so loudly when it fails (an environment
+  problem: do not patch the project).
+
 ### Changed
 - The hunt must leave the clone's tracked files unmodified (new check `clone_untouched`): a model that patched the project's `__init__`
   to get past an import error would have run its repro on code it had changed.
