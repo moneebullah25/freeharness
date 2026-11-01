@@ -5,7 +5,8 @@ anything from the repository: no setup.py, no build backend, no `pip install .`,
 Used by the gh_setup_env tool (mcp/ghgate.py). Input is text (read from git objects by the caller); output is
 requirement strings that match a strict PEP 508 shape, plus an honest list of every line that was skipped and why.
 
-Read:    pyproject.toml  [project].dependencies, [project.optional-dependencies] and [dependency-groups] whose name
+Read:    pyproject.toml  [tool.poetry] dependencies and dev/test groups (^ ~ converted),
+         [project].dependencies, [project.optional-dependencies] and [dependency-groups] whose name
          is a test/lint/dev kind (or is asked for), requirements*.txt at the top level, requirements/*.txt
 Skipped: -e/--editable, local paths, VCS and URL requirements (anything not https://pypi.org or
          https://files.pythonhosted.org), index/find-links/trusted-host/pre/hash options, constraint files, anything that
@@ -282,6 +283,57 @@ def _wanted_group(name: str, extras: set[str]) -> bool:
     return n in DEFAULT_GROUPS or n in extras
 
 
+def _poetry_spec(ver: str) -> str:
+    """A Poetry version constraint as a PEP 440 specifier: ^1.2.3 -> >=1.2.3,<2; ~1.2 -> >=1.2,<1.3; 1.2.3 -> ==1.2.3; * -> any."""
+    ver = (ver or "").strip()
+    if ver in ("", "*"):
+        return ""
+    out = []
+    for part in (p.strip() for p in ver.split(",") if p.strip()):
+        m = re.match(r"^([\^~])\s*(\d+(?:\.\d+)*)$", part)
+        if m:
+            nums = [int(x) for x in m.group(2).split(".")]
+            lo = ".".join(str(n) for n in nums)
+            if m.group(1) == "^":
+                i = next((k for k, n in enumerate(nums) if n), len(nums) - 1)
+                up = nums[:i] + [nums[i] + 1]
+            else:
+                up = nums[:1] + [nums[1] + 1] if len(nums) > 1 else [nums[0] + 1]
+            out.append(f">={lo},<{'.'.join(str(n) for n in up)}")
+        elif re.match(r"^\d", part):
+            out.append("==" + part)
+        else:
+            out.append(part.replace(" ", ""))
+    return ",".join(out)
+
+
+def _poetry_reqs(table: dict, col: Collected, extras_on: set[str] | None = None, optional_ok: bool = False) -> None:
+    """Requirement lines from a Poetry dependency table. Optional ones only when `optional_ok` or named in `extras_on`;
+    git/path/url sources are skipped like everywhere else."""
+    for name, spec in (table or {}).items():
+        if norm(str(name)) == "python":
+            continue
+        extras, marker, opt = "", "", False
+        if isinstance(spec, dict):
+            if any(k in spec for k in ("git", "path", "url")):
+                col.skipped.append(f"{str(name)[:40]} (git/path/url source)")
+                continue
+            ver = str(spec.get("version", "*"))
+            if spec.get("extras"):
+                extras = "[" + ",".join(str(x) for x in spec["extras"]) + "]"
+            if spec.get("markers"):
+                marker = " ; " + str(spec["markers"])
+            opt = bool(spec.get("optional"))
+        elif isinstance(spec, str):
+            ver = spec
+        else:
+            col.skipped.append(f"{str(name)[:40]} (not a plain Poetry constraint)")
+            continue
+        if opt and not optional_ok and norm(str(name)) not in (extras_on or set()):
+            continue
+        col.add(f"{name}{extras}{_poetry_spec(ver)}{marker}")
+
+
 def _from_pyproject(col: Collected, text: str, extras: set[str]) -> None:
     try:
         data = load_toml(text)
@@ -302,8 +354,22 @@ def _from_pyproject(col: Collected, text: str, extras: set[str]) -> None:
                 _expand(col, table[name], table, {name}, 0, opt)
                 used.append(f"{kind}.{name}")
                 col.found.add(name)
-    if (data.get("tool") or {}).get("poetry") and not proj:
-        col.notes.append("pyproject uses Poetry's own dependency tables, which are not read")
+    poetry = (data.get("tool") or {}).get("poetry")
+    if isinstance(poetry, dict) and not proj.get("dependencies"):
+        col.project = norm(str(poetry.get("name", "")))
+        pextras = {norm(k): v for k, v in (poetry.get("extras") or {}).items() if isinstance(v, list)}
+        on = {norm(x) for e in extras if e in pextras or norm(e) in pextras for x in pextras.get(norm(e), [])}
+        col.found |= {norm(e) for e in extras if norm(e) in pextras}
+        _poetry_reqs(poetry.get("dependencies") or {}, col, on)
+        used.append("poetry.dependencies")
+        for gname, g in (poetry.get("group") or {}).items():
+            if isinstance(g, dict) and _wanted_group(gname, extras):
+                _poetry_reqs(g.get("dependencies") or {}, col, on, optional_ok=True)
+                used.append(f"poetry.group.{gname}")
+                col.found.add(norm(gname))
+        if _wanted_group("dev", extras) and isinstance(poetry.get("dev-dependencies"), dict):
+            _poetry_reqs(poetry["dev-dependencies"], col, on, optional_ok=True)
+            used.append("poetry.dev-dependencies")
     if used:
         col.sources.append("pyproject.toml[" + ", ".join(used) + "]")
 

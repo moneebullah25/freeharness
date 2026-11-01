@@ -92,9 +92,9 @@ def test_a_broken_pyproject_is_a_note_not_a_crash():
     assert c.reqs == [] and isinstance(c.notes, list)
 
 
-def test_poetry_projects_are_reported_as_unsupported():
+def test_poetry_projects_are_read():
     c = collect({"pyproject.toml": '[tool.poetry]\nname = "p"\n[tool.poetry.dependencies]\nrequests = "^2"\n'})
-    assert c.reqs == [] and any("Poetry" in n for n in c.notes)
+    assert c.reqs == ["requests>=2,<3"] and not c.notes
 
 
 @pytest.mark.parametrize("line,ok", [
@@ -165,3 +165,32 @@ def test_include_loops_file_limit_and_requirement_cap_are_bounded():
 def test_a_missing_or_unreadable_file_is_a_note():
     c = d.collect(["requirements.txt"], [], lambda p: None, set())
     assert c.reqs == [] and any("could not be read" in n for n in c.notes)
+
+
+def test_poetry_dependency_tables_are_read():
+    toml = '''
+[project]
+name = "lib"
+[tool.poetry]
+name = "lib"
+[tool.poetry.dependencies]
+python = "^3.10"
+sqlalchemy = {version = "^2.0.40", extras = ["asyncio"]}
+orjson = ">=3.6.4"
+aiosqlite = {version = ">=0.19,<0.23", optional = true}
+mylocal = {path = "../x"}
+[tool.poetry.extras]
+sqlite = ["aiosqlite"]
+[tool.poetry.group.dev.dependencies]
+pytest = "~8.2"
+[tool.poetry.group.docs.dependencies]
+mkdocs = "^1.5"
+'''
+    rd = lambda p: toml if p == "pyproject.toml" else None
+    col = d.collect(["pyproject.toml"], [], rd, set())
+    assert "SQLAlchemy[asyncio]>=2.0.40,<3" in col.reqs or "sqlalchemy[asyncio]>=2.0.40,<3" in col.reqs
+    assert "orjson>=3.6.4" in col.reqs and "pytest>=8.2,<8.3" in col.reqs
+    assert not any(r.startswith(("aiosqlite", "mkdocs", "python", "mylocal")) for r in col.reqs)
+    assert any("mylocal" in x for x in col.skipped)
+    col = d.collect(["pyproject.toml"], [], rd, {"sqlite"})
+    assert "aiosqlite>=0.19,<0.23" in col.reqs and not col.notes
