@@ -1,0 +1,24 @@
+{
+  "note": "ANSWER KEY. Never copied into a model's workspace: the runner copies only ./project. A bug counts as found when one finding block names its function (the `Function:` line, else the text) and matches its pattern.",
+  "bugs": [
+    {"id": "hardcoded-secret", "class": "security", "file": "shop/config.py", "function": "SECRET_KEY", "pattern": "hard.?cod|secret|committed|in the source|environment|env var"},
+    {"id": "weak-password-hash", "class": "security", "file": "shop/auth.py", "function": "hash_password", "pattern": "md5|unsalted|salt|bcrypt|argon|scrypt|pbkdf|weak hash|fast hash"},
+    {"id": "token-expiry-units", "class": "security", "file": "shop/auth.py", "function": "verify_token", "pattern": "1000|millisecond|expir|ttl|unit|never expire|too long|lifetime"},
+    {"id": "signature-timing", "class": "security", "file": "shop/auth.py", "function": "verify_token", "pattern": "compare_digest|constant.?time|timing|side.?channel"},
+    {"id": "sql-injection", "class": "security", "file": "shop/store.py", "function": "find_user", "pattern": "inject|f-string|format|concatenat|parameter|placeholder|sanitiz"},
+    {"id": "path-traversal", "class": "security", "file": "shop/store.py", "function": "read_receipt", "pattern": "travers|\\.\\./|directory escape|outside|arbitrary file|normaliz|realpath|abspath"},
+    {"id": "idor-order", "class": "api", "file": "shop/api.py", "function": "get_order", "pattern": "idor|owner|authoriz|another user|other user|any user|access control|belong|ownership|user_id"},
+    {"id": "no-input-validation", "class": "api", "file": "shop/api.py", "function": "create_order", "pattern": "validat|negative|quantity|qty|price|empty|schema|type check|malformed|sanitiz"},
+    {"id": "wrong-status-code", "class": "api", "file": "shop/api.py", "function": "create_order", "pattern": "201|created|status code|http status"},
+    {"id": "pagination-off-by-one", "class": "logic", "file": "shop/api.py", "function": "list_orders", "pattern": "off.?by.?one|first page|skips|page \\* |page-1|page - 1|1-based|zero-based|offset|start index"},
+    {"id": "error-leaks-trace", "class": "api", "file": "shop/api.py", "function": "handle", "pattern": "traceback|stack trace|leak|disclos|internal|str\\(exc|exception message|verbose error"},
+    {"id": "float-money", "class": "logic", "file": "shop/store.py", "function": "save_order", "pattern": "float|decimal|cents|round|precision|money|currency|integer"},
+    {"id": "discount-precedence", "class": "logic", "file": "shop/util.py", "function": "apply_discount", "pattern": "precedence|//|floor|integer division|parenthes|wrong|rounds down|discount"},
+    {"id": "mutable-default", "class": "logic", "file": "shop/util.py", "function": "unique", "pattern": "mutable|default argument|default arg|seen=\\[\\]|shared|persist|between calls|state leak"}
+  ],
+  "decoys": [
+    {"id": "find-order-is-parameterized", "function": "find_order", "pattern": "inject|sql|parameter|f-string|format"},
+    {"id": "check-password-is-constant-time", "function": "check_password", "pattern": "timing|constant.?time|compare|side.?channel"},
+    {"id": "format-price-is-fine", "function": "format_price", "pattern": "float|round|precision|locale|currency|bug|wrong"}
+  ]
+}
