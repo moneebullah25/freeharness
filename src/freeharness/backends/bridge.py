@@ -50,6 +50,7 @@ SEL = CHATGPT.sel
 FENCE = re.compile(r"```[^\n]*\n(.*?)\n?```", re.S)   # a fenced block in markdown
 IDLE_SETTLE = 0.6      # seconds of unchanged text that counts as finished
 POLL = 0.12            # how often to scrape the growing answer
+GENERATING_FACTOR = 3        # reply_timeout x this: the longest wait for a reply that has not started but whose page shows it is generating
 NAV_TIMEOUT = 45_000
 # Navigation is intermittently flaky: `domcontentloaded` has loaded in 2.6s and
 # also timed out twice at 30s minutes apart. So use a SHORT per-attempt timeout
@@ -626,7 +627,9 @@ class Session:
     def _collect(self, before: int, should_stop=None, before_text=None):
         # Wait for the new assistant turn to exist.
         answer = self.page.locator(self.p.sel["assistant"][0])
-        deadline = time.monotonic() + self.p.reply_timeout
+        started = time.monotonic()
+        deadline = started + self.p.reply_timeout
+        hard_cap = started + self.p.reply_timeout * GENERATING_FACTOR     # a page still generating is waited for, up to here
         next_check = time.monotonic() + 2
         while not self._reply_started(before, before_text):
             if should_stop and should_stop():
@@ -645,7 +648,9 @@ class Session:
                 shown = self.page_notice(self.p.errors)
                 if shown:                     # a limit / "try again later" notice: waiting longer will not produce a reply
                     raise RuntimeError(f"{self.p.label} shows a notice and no reply started: {shown!r}")
-            if time.monotonic() > deadline:
+            if time.monotonic() > deadline and not (time.monotonic() < hard_cap and self._streaming()):
+                # MEASURED live 2026-11-01: Qwen's stop button was showing (it was thinking) when the 420s ran out; failing over
+                # threw that work away. Only a page that is NOT generating, or one past the cap, ends the wait.
                 raise TimeoutError(
                     f"no reply started within {self.p.reply_timeout}s. "
                     f"{self.page_state()}")

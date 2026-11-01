@@ -33,6 +33,8 @@ releases may include breaking changes; they will be listed under **Changed**.
   final error no longer claims "every provider says the prompt/chat is too long".
 
 ### Changed
+- The wait for a reply to START keeps going while the page shows it is generating (stop button), up to 3 x `reply_timeout`. Qwen was thinking
+  at 420 s, the shim gave up and failed over, and the work was thrown away. A page that is not generating still times out as before.
 - The hunt must leave the clone's tracked files unmodified (new check `clone_untouched`): a model that patched the project's `__init__`
   to get past an import error would have run its repro on code it had changed.
 - `gh_setup_env` writes a metadata-only dist-info for the project (name and version from upstream's pyproject.toml, no code), so

@@ -450,3 +450,62 @@ def test_a_new_reply_is_seen_even_when_a_long_chat_page_keeps_the_assistant_turn
     assert s._reply_started(5, None) is False              # without the old text only the count counts (as before)
     s._streaming = lambda: False
     assert s.adoptable(5, "old reply") is True
+
+
+def _generating_session(provider, start_after, streaming=True):
+    """A page whose assistant text appears `start_after` seconds after the wait begins; `streaming` is the stop button."""
+    t0 = time.monotonic()
+
+    class Loc:
+        def count(self):
+            return 1 if time.monotonic() - t0 > start_after else 0
+        last = first = property(lambda self: self)
+
+        def inner_text(self):
+            return "answer"
+
+    class Page:
+        def locator(self, css):
+            return Loc()
+    s = object.__new__(bridge.Session)
+    s.p, s.page = provider, Page()
+    s._challenged = lambda: False
+    s.chat_full = lambda: False
+    s.page_notice = lambda markers: ""
+    s._streaming = lambda: streaming and time.monotonic() - t0 <= start_after       # the stop button goes away once the text is there
+    s._last_text = lambda: None
+    s.page_state = lambda: "state"
+    s.stop_generation = lambda: None
+    return s
+
+
+def test_a_page_that_is_still_generating_is_waited_for_past_the_reply_timeout(monkeypatch):
+    import dataclasses
+    monkeypatch.setattr(bridge, "POLL", 0.02)
+    monkeypatch.setattr(bridge, "IDLE_SETTLE", 0.05)
+    p = dataclasses.replace(bridge.CHATGPT, reply_timeout=0.3, answer_timeout=5)
+    s = _generating_session(p, start_after=0.6)                       # first text after 0.6s: past 0.3s, inside the 3 x 0.3s cap
+    assert list(s._collect(0))                                           # it was waited for, not given up on
+
+
+def test_a_page_that_is_not_generating_still_times_out_at_the_reply_timeout(monkeypatch):
+    import dataclasses
+    monkeypatch.setattr(bridge, "POLL", 0.02)
+    p = dataclasses.replace(bridge.CHATGPT, reply_timeout=0.3, answer_timeout=5)
+    s = _generating_session(p, start_after=5, streaming=False)
+    t0 = time.monotonic()
+    with pytest.raises(TimeoutError, match="no reply started within 0.3s"):
+        list(s._collect(0))
+    assert time.monotonic() - t0 < 1.0
+
+
+def test_a_generating_page_is_waited_for_only_up_to_the_cap(monkeypatch):
+    import dataclasses
+    monkeypatch.setattr(bridge, "POLL", 0.02)
+    p = dataclasses.replace(bridge.CHATGPT, reply_timeout=0.2, answer_timeout=5)
+    s = _generating_session(p, start_after=99, streaming=True)           # generating forever
+    t0 = time.monotonic()
+    with pytest.raises(TimeoutError):
+        list(s._collect(0))
+    took = time.monotonic() - t0
+    assert 0.5 < took < 2.0, took                                        # about 3 x 0.2s, not 0.2s and not forever
