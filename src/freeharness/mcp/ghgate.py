@@ -746,7 +746,11 @@ class Gate:
         origin = fork or repo
         db = i["default_branch"]
         dest_p.parent.mkdir(parents=True, exist_ok=True)
-        self._git(None, "clone", "--origin", "origin", "--", self._url(origin), str(dest_p), timeout=300)
+        try:
+            self._git(None, "clone", "--origin", "origin", "--", self._url(origin), str(dest_p), timeout=300)
+        except Exception:                            # a clone that timed out or failed leaves a partial folder (dest was empty or new, so it is ours)
+            shutil.rmtree(dest_p, ignore_errors=True)  # without this the retry is refused with "dest exists and is not empty"
+            raise
         self._git(dest_p, "remote", "add", "upstream", self._url(repo))
         self._git(dest_p, "config", "remote.upstream.fetch", f"+refs/heads/{db}:refs/remotes/upstream/{db}")
         self._git(dest_p, "config", "remote.upstream.pushurl", "DISABLED")       # nobody pushes to upstream by accident

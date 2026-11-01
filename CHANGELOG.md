@@ -8,6 +8,7 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Added
+- `gh_clone` removes its own half-finished folder when the clone fails or times out; before, the retry was refused with "dest exists and is not empty" and the run could not recover.
 - `python -m freeharness.eval.seeded`: a planted-bug audit (a small orders service with 14 known bugs and 3 decoys; the answer key is never in the
   model's workspace). Variants: A code reviewer only, B all lenses at once, C no skills, D one lens per pass graded after each pass. First result on
   Qwen: C 8/14, A 9/14, B 9/14.

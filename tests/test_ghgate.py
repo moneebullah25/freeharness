@@ -910,3 +910,22 @@ def test_gh_search_takes_repo_from_the_query_when_the_argument_is_missing(tmp_pa
     import re
     src = (Path(__file__).resolve().parents[1] / "src/freeharness/mcp/ghgate.py").read_text()
     assert 'repo is required (owner/name)' in src and re.search(r'"gh_search".*\["query"\]\)', src)
+
+
+def test_a_clone_that_fails_leaves_no_partial_folder_so_the_retry_works(w):
+    gate = w.gate()
+    real = gate._git
+
+    def flaky(cwd, *args, **kw):
+        if args and args[0] == "clone":
+            dest = w.ws / "proj"
+            (dest / ".git").mkdir(parents=True)          # what a timed-out clone leaves behind
+            raise TimeoutError("git clone timed out")
+        return real(cwd, *args, **kw)
+
+    gate._git = flaky
+    with pytest.raises(TimeoutError):
+        gate.gh_clone("up/proj", "proj")
+    assert not (w.ws / "proj").exists()
+    gate._git = real
+    assert "cloned" in gate.gh_clone("up/proj", "proj")
