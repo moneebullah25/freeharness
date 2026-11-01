@@ -242,6 +242,7 @@ class Collected:
         self.notes: list[str] = []
         self.project = ""
         self.found: set[str] = set()      # asked-for extras that matched something
+        self.optional: dict[str, list[str]] = {}   # extras the project declares but that were NOT installed: name -> its requirement names
 
     def add(self, line: str) -> None:
         clean, why = vet(line)
@@ -372,12 +373,18 @@ def _from_pyproject(col: Collected, text: str, extras: set[str]) -> None:
                 _expand(col, table[name], table, {name}, 0, opt)
                 used.append(f"{kind}.{name}")
                 col.found.add(name)
+    for name, items in opt.items():
+        if name not in extras and not _wanted_group(name, set()):
+            col.optional[name] = [re.split(r"[\[\s;<>=!~(@]", str(i), maxsplit=1)[0] for i in items if isinstance(i, str)][:6]
     poetry = (data.get("tool") or {}).get("poetry")
     if isinstance(poetry, dict) and not proj.get("dependencies"):
         col.project = norm(str(poetry.get("name", "")))
         pextras = {norm(k): v for k, v in (poetry.get("extras") or {}).items() if isinstance(v, list)}
         on = {norm(x) for e in extras if e in pextras or norm(e) in pextras for x in pextras.get(norm(e), [])}
         col.found |= {norm(e) for e in extras if norm(e) in pextras}
+        for ename, members in pextras.items():
+            if ename not in extras:
+                col.optional[ename] = [str(m) for m in members][:6]
         _poetry_reqs(poetry.get("dependencies") or {}, col, on)
         used.append("poetry.dependencies")
         for gname, g in (poetry.get("group") or {}).items():

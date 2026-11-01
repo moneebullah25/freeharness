@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Added
+- `gh_setup_env` lists the optional extras a project declares and that were not installed (ormar: `sqlite`, `postgresql`, ...) and says to call it
+  again with `extras="name"` when the tests need a driver. ormar's tests need `aiosqlite`; a model tried `pip install` with no network instead.
 - One process per run directory: `run.lock` (created exclusively, holds the pid; a dead owner's lock is taken over). A second `oss run
   --resume` of a live run refuses at once instead of racing the first.
 - Preflight for `freeharness oss run` (and `--resume`): refuses to start when the bash sandbox is not `full`, or when every named model is at its

@@ -1063,6 +1063,10 @@ class Gate:
                   "  then the tool, e.g.  <prefix> pytest -q -p no:cacheprovider   or   <prefix> ruff check .",
                   "The project itself is NOT installed (imports come from PYTHONPATH); tests that read installed metadata or "
                   "need a compiled extension may fail for that reason."]
+        if col.optional:
+            lines.append("optional extras this project declares and that are NOT installed (call gh_setup_env again with extras=\"name\" "
+                         "when its tests need one, e.g. a database driver): "
+                         + "; ".join(f"{n} ({', '.join(m)})" for n, m in list(col.optional.items())[:8]))
         if col.skipped:
             lines.append(f"skipped {len(col.skipped)} unsafe or unsupported line(s): " + " | ".join(col.skipped[:6]))
         lines += [f"note: {n}" for n in col.notes[:4]]

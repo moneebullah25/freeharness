@@ -206,3 +206,16 @@ mkdocs = "^1.5"
 ])
 def test_project_identity_for_the_metadata_stub(toml, want):
     assert d.project_identity(toml) == want
+
+
+def test_uninstalled_optional_extras_are_listed_so_a_model_can_ask_for_a_database_driver():
+    toml = ('[tool.poetry]\nname = "p"\n[tool.poetry.dependencies]\nrequests = "^2"\naiosqlite = {version = ">=0.19", optional = true}\n'
+            '[tool.poetry.extras]\nsqlite = ["aiosqlite"]\ncrypto = ["cryptography"]\n')
+    rd = lambda p: toml if p == "pyproject.toml" else None
+    col = d.collect(["pyproject.toml"], [], rd, set())
+    assert col.optional == {"sqlite": ["aiosqlite"], "crypto": ["cryptography"]} and "aiosqlite>=0.19" not in col.reqs
+    col = d.collect(["pyproject.toml"], [], rd, {"sqlite"})
+    assert "sqlite" not in col.optional and "crypto" in col.optional and "aiosqlite>=0.19" in col.reqs
+    pep = '[project]\nname = "p"\ndependencies = ["requests"]\n[project.optional-dependencies]\nsqlite = ["aiosqlite"]\ntest = ["pytest"]\n'
+    col = d.collect(["pyproject.toml"], [], lambda p: pep if p == "pyproject.toml" else None, set())
+    assert col.optional == {"sqlite": ["aiosqlite"]} and "pytest" in col.reqs        # the test group is installed, so not "optional"
