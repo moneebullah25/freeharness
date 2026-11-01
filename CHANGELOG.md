@@ -118,6 +118,8 @@ releases may include breaking changes; they will be listed under **Changed**.
   The state block is attached after the fit so it cannot be dropped with the oldest messages.
 
 ### Added
+- A resumed run re-judges the repro of a hunt that already passed with the current checks. If it no longer counts, the candidate is
+  dropped (like a duplicate) and the model hunts for another, instead of carrying on to an issue draft and a fix for it.
 - `freeharness oss run <owner/repo> --from-issues [--label bug]`: instead of hunting in the code, the model lists the repo's open issues with a
   label (new read-only gate tools `gh_list_issues`, `gh_issue_read`), picks ONE that is open and unassigned, reproduces it itself,
   and the usual dupcheck, fix and PR stages follow. No new issue is filed (the issue stage adopts the existing one). New checks:

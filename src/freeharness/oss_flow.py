@@ -655,7 +655,47 @@ class Flow:
         self.note(f"issue: adopted the existing open issue #{n}; nothing is filed")
         self.checkpoint()
 
+    def rejudge_hunt(self) -> str:
+        """A run that is resumed was judged by the checks of that day. Re-run the repro check of a hunt that already passed with
+        the CURRENT checks: if its recorded repro no longer counts (it never ran the project, say), drop the candidate and send
+        the model back to the hunt for another (like a duplicate would). '' = nothing to do, 'dropped', 'blocked'."""
+        hunt = BY_ID["hunt"]
+        if self.state["stages"]["hunt"]["status"] != "passed":
+            return ""
+        c = self.cand()
+        n = (c.get("repro") or {}).get("n")
+        if n is None:
+            return ""
+        calls = [x for x in self.stage_calls(hunt) if int(x.get("n", 0) or 0) <= int(n)]
+        sec = st.candidate_section(st.read_report(self.rd, self.repo), self.state["candidate_no"])
+        clone, _ = st.find_clone(self.rd, self.repo)
+        items, repro = st.find_repro(calls, sec, clone)
+        if repro:
+            return ""
+        why = next((i["evidence"] for i in items if i["id"] == "repro_run"), "its repro does not pass the repro check")
+        label = "its repro no longer passes the repro check: " + _clip(why, 160)
+        if self.state["candidate_no"] >= MAX_CANDIDATES:
+            self.state["blocked"] = {"stage": "hunt", "reason": label, "kind": "stage"}
+            self.note(f"hunt: candidate {c['no']} re-judged: {label}; no candidate left")
+            self.checkpoint()
+            return "blocked"
+        self.state["dropped"].append({"no": c["no"], "title": c.get("title", ""), "decision": label, "hit": ""})
+        for sid in self.state["order"][self.state["order"].index("hunt"):]:
+            old = self.state["stages"][sid]
+            if old.get("status") != "pending":
+                self.state["history"].append({**old, "id": sid})
+            self.state["stages"][sid] = {"status": "pending", "turns": 0, "repairs": 0, "reviews": 0, "steps": 0}
+        self.state["issue"], self.state["branch"], self.state["blocked"] = None, "", None
+        self.state["candidate_no"] += 1
+        self.note(f"hunt: candidate {c['no']} re-judged with the current checks and dropped ({label}); "
+                  f"the model may pick candidate {self.state['candidate_no']} (max {MAX_CANDIDATES}). Any issue draft it made stays "
+                  "in the drafts: refuse it")
+        self.checkpoint()
+        return "dropped"
+
     def run_all(self) -> str:
+        if self.rejudge_hunt() == "blocked":
+            return "blocked"
         while True:
             stage = self.next_stage()
             if stage is None:

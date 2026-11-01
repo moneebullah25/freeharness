@@ -531,3 +531,43 @@ def test_a_repro_that_only_raises_its_own_error_is_not_a_repro(tmp_path):
 ])
 def test_only_a_real_import_counts_as_using_the_project(cmd, ok):
     assert st.touches_repo(cmd, [], ["mylib"]) is ok
+
+
+# ======================================================================================= re-judging a passed hunt on resume
+
+def _passed_hunt(f, repro_out, cand_no=1):
+    f.state["candidate_no"] = cand_no
+    for sid in ("setup", "hunt", "dupcheck", "issue"):
+        f.state["stages"][sid] = {"status": "passed", "turns": 1, "repairs": 0, "reviews": 0, "steps": 3}
+    f.state["issue"], f.state["branch"] = {"number": 900001, "placeholder": True}, "fix/900001-x"
+    f.cand().update(title="average() raises", repro={"n": 2, "command": "python3 r.py", "output": repro_out})
+    calls = [call(1, "cat src/app.py", "def average"), call(2, "python3 r.py", repro_out, 1 if "Error" in repro_out else 0),
+             call(5, "python3 r.py", "")]
+    f.stage_calls = lambda stage: calls          # the call log of the hunt window, without a real run directory
+    f.rec = type("Rec", (), {"note": lambda self, *a, **k: None})()
+    f.checkpoint = lambda: None
+    return f
+
+
+def test_a_passed_hunt_whose_repro_no_longer_counts_is_dropped_and_the_model_hunts_again(tmp_path):
+    f = _passed_hunt(make_flow(tmp_path), "all fine\n")             # no failure text: the current checks refuse it
+    assert f.rejudge_hunt() == "dropped"
+    s = f.state
+    assert s["candidate_no"] == 2 and s["issue"] is None and s["branch"] == "" and s["blocked"] is None
+    assert s["dropped"][0]["no"] == 1 and "no longer passes the repro check" in s["dropped"][0]["decision"]
+    assert [s["stages"][x]["status"] for x in ("setup", "hunt", "dupcheck", "issue")] == ["passed", "pending", "pending", "pending"]
+    assert {h["id"] for h in s["history"]} == {"hunt", "dupcheck", "issue"}
+    assert "was dropped: its repro no longer passes the repro check" in f.render(oss_flow.BY_ID["hunt"])
+
+
+def test_a_passed_hunt_with_a_good_repro_is_left_alone(tmp_path):
+    tb = "Traceback (most recent call last):\n  File \"r.py\", line 1\nZeroDivisionError: division by zero\n[exit code: 1]"
+    f = _passed_hunt(make_flow(tmp_path), tb)
+    assert f.rejudge_hunt() == "" and f.state["candidate_no"] == 1 and not f.state["dropped"]
+    assert f.state["stages"]["hunt"]["status"] == "passed"
+
+
+def test_rejudging_the_last_allowed_candidate_blocks_the_run(tmp_path):
+    f = _passed_hunt(make_flow(tmp_path), "all fine\n", cand_no=oss_flow.MAX_CANDIDATES)
+    assert f.rejudge_hunt() == "blocked" and f.state["blocked"]["stage"] == "hunt"
+    assert f.state["candidate_no"] == oss_flow.MAX_CANDIDATES
