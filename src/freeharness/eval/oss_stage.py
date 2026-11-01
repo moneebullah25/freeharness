@@ -271,7 +271,8 @@ def touches_repo(cmd: str, earlier: list[dict], packages: list[str]) -> bool:
         return True
     names = "|".join(re.escape(p) for p in packages)
     src = repro_source(cmd, earlier)
-    return bool(re.search(rf"(?m)(?:^|[;\s\x27\x22(])(?:import|from)\s+(?:{names})\b|-m\s+(?:{names})\b", src))
+    imp = rf"(?m)(?:^|[;\x27\x22(])[ \t]*(?:import|from)[ \t]+(?:{names})(?=[ \t]*(?:$|[.,;\x27\x22)]|as\b|import\b))"
+    return bool(re.search(imp, src) or re.search(rf"-m\s+(?:{names})\b", src))
 
 
 def find_repro(stage_calls: list[dict], section: dict | None, clone=None) -> tuple[list[dict], dict | None]:

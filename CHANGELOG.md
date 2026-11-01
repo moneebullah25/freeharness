@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- The "repro imports the project" check counts only a real `import`/`from` statement, not the words "from <package>" in a docstring or
+  comment: a script that copied the project's function verbatim passed it by its own comment.
 - The resume prompt says the dependency venv may be stale and to call `gh_setup_env` again if importing the project fails; models used to
   search the whole disk for the missing package instead.
 - `gh_setup_env` reads Poetry projects: `[tool.poetry.dependencies]` and the dev/test groups, with `^` and `~` constraints converted. It used

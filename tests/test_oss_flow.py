@@ -517,3 +517,17 @@ def test_a_repro_that_only_raises_its_own_error_is_not_a_repro(tmp_path):
     assert repro is not None
     items, repro = st.find_repro([call(1, "python3 -c 'import mylib; raise AssertionError(\"FAIL\")'", tb, 1)], sec, tmp_path)
     assert repro is not None
+
+
+@pytest.mark.parametrize("cmd,ok", [
+    ("python3 -c 'import mylib; print(1)'", True),
+    ("python3 -c \"from mylib import Model\"", True),
+    ("python3 -c 'import mylib.sub as s'", True),
+    ("cat > s.py <<'E'\nimport mylib\nE\npython3 s.py", True),
+    ("python3 -m mylib.x", True),
+    ("python3 - <<'E'\n# a copy, verbatim from\nmylib/x.py lines 1-9\nprint(1)\nE", False),     # prose that says "from <package>"
+    ("python3 -c 'print(\"from mylib is nice\")'", False),
+    ("python3 scratch/copy.py", False),
+])
+def test_only_a_real_import_counts_as_using_the_project(cmd, ok):
+    assert st.touches_repo(cmd, [], ["mylib"]) is ok
