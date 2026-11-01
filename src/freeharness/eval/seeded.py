@@ -47,25 +47,52 @@ List every real problem you find (up to 20), most certain first. Say DONE when t
 LENSES = ("agency-code-reviewer", "agency-application-security-engineer", "agency-penetration-tester", "agency-api-tester",
           "agency-identity-access-engineer", "agency-secrets-credential-hygiene-engineer", "agency-performance-benchmarker")
 
+METHOD = """Method (follow it in order, do not skip steps):
+1. Inventory: list every function and module-level setting in every source file (`grep -n "def \\|^[A-Z_]* =" -r .`). Read each file completely.
+2. Walk: for EACH function write yourself a note: who controls its inputs, what it returns, what it touches (database, files, secrets, network), and what happens on bad input (empty, negative, zero, huge, wrong type, first/last element).
+3. Check each function against every one of these classes: untrusted input reaching a sink (SQL, file path, shell, response body); secrets and configuration; hashing, signing and comparisons; units, types, rounding, integer-vs-float and operator precedence; boundaries and off-by-one; shared or mutable state; who may call it and whose data it returns; HTTP status codes and error bodies; validation of every field.
+4. Prove: for each suspect, write a tiny `python3 -c` or script that imports the code and shows the wrong behaviour. A suspect you could not prove is still listed, marked `unconfirmed`. A function you checked and found correct is simply not listed.
+"""
+
+LEDGER = """Method (follow it in order):
+1. Inventory every function and module-level setting in every source file and read each file completely.
+2. Write `ledger.md` FIRST: one line per function or setting, `name | file | verdict | reason`, where verdict is `bug`, `suspect` or `ok`. Before giving a verdict, ask of that item each of these: can an outsider control its input, and where does it go (SQL, file path, response)? Is anything secret or hard-coded? Are hashes, signatures and comparisons sound? Are units, types, rounding and operator precedence right? What happens at the edges (empty, zero, negative, first/last, off-by-one)? Is state shared between calls? Who is allowed to call it, and whose data does it return? Are HTTP status codes and error bodies correct and safe? Is every input field validated? Give `ok` only with a reason that names what you checked.
+3. For each `bug` or `suspect`, prove it with a tiny python snippet that imports the code (a `suspect` you cannot prove still goes in the findings, marked `unconfirmed`). Weak practice and missing hardening count: a finding does not need a working exploit to be real.
+4. Then write `findings.md` with one block per `bug` and `suspect` line of the ledger.
+"""
+
 VARIANTS = {
     "A": "Before reading any code, load the skill `agency-code-reviewer` with the skill tool and review through it.\n\n" + COMMON,
     "B": ("Before reading any code, load each of these skills with the skill tool and review the code through every one of them: "
           + ", ".join(f"`{s}`" for s in LENSES) + ".\n\n" + COMMON),
     "C": "Do not use the skill tool.\n\n" + COMMON,
     "D": "Before reading any code, load the skill `agency-code-reviewer` with the skill tool and review through it.\n\n" + COMMON,
+    "E": "Before reading any code, load the skill `agency-code-reviewer` with the skill tool and review through it.\n\n" + METHOD + "\n" + COMMON,
+    "G": "Before reading any code, load the skill `agency-code-reviewer` with the skill tool and review through it.\n\n" + LEDGER + "\n" + COMMON,
+    "H": "Before reading any code, load the skill `agency-code-reviewer` with the skill tool and review through it.\n\n" + LEDGER + "\n" + COMMON,
+    "F": "Before reading any code, load the skill `agency-code-reviewer` with the skill tool and review through it.\n\n" + METHOD + "\n" + COMMON,
 }
 
 FOLLOWUP = """Second look, through a different lens. Load the skill `{skill}` with the skill tool and review the SAME code again, strictly through that
 skill: look for what it treats as important. Append only NEW findings to `findings.md` (same layout, keep numbering on from the last block;
 do not repeat or edit earlier ones). If this lens finds nothing new, append nothing. Say DONE."""
 
-FOLLOWUPS = {"D": [FOLLOWUP.format(skill=s) for s in LENSES[1:]]}
+LEDGER_FOLLOWUP = """Second look, through a different lens. Load the skill `{skill}` with the skill tool. Go back over EVERY row of `ledger.md`, including the `ok` rows, and re-judge each strictly through that skill: what does it treat as important that you did not ask the first time? Change a verdict in the ledger when it now looks wrong, and append only NEW findings to `findings.md` (same layout, numbering on from the last block; do not repeat earlier ones). If nothing is new, append nothing. Say DONE."""
+
+FOLLOWUPS = {"H": [LEDGER_FOLLOWUP.format(skill=s) for s in LENSES[1:]], "D": [FOLLOWUP.format(skill=s) for s in LENSES[1:]], "F": [FOLLOWUP.format(skill=s) for s in LENSES[1:]]}
 
 
 # ---------------------------------------------------------------------------------------------- grading (pure)
 
-def load_key(path: Path = KEY) -> dict:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+def use_fixture(name: str) -> None:
+    """Point the runner at evals/<name> (`seeded_audit` is the default; `seeded_holdout` has different code and bugs of the same classes)."""
+    global ROOT, PROJECT, KEY
+    ROOT = Path(__file__).resolve().parents[3] / "evals" / name
+    PROJECT, KEY = ROOT / "project", ROOT / "key.json"
+
+
+def load_key(path: Path | None = None) -> dict:
+    return json.loads(Path(path or KEY).read_text(encoding="utf-8"))
 
 
 _BLOCK_START = re.compile(r"(?m)^(?:#{2,4}[ \t]+|\d+[.)][ \t]+|[-*][ \t]+\*\*)")
@@ -121,7 +148,7 @@ def grade(findings: str, key: dict) -> dict:
     extra = [blocks[i].splitlines()[0][:100] for i in range(len(blocks)) if i not in matched]
     return {"found": sorted(found), "missed": [b["id"] for b in key["bugs"] if b["id"] not in found],
             "recall": round(len(found) / len(key["bugs"]), 3), "by_class": {k: f"{v[0]}/{v[1]}" for k, v in by_class.items()},
-            "false_positives": false_pos, "extra_blocks": extra, "blocks": len(blocks)}
+            "total": len(key["bugs"]), "false_positives": false_pos, "extra_blocks": extra, "blocks": len(blocks)}
 
 
 # ---------------------------------------------------------------------------------------------- running a variant
@@ -194,7 +221,7 @@ def summary_line(r: dict) -> str:
     steps_txt = ""
     if len(r.get("progress", [])) > 1:
         steps_txt = "  per pass " + " -> ".join(f"{p['found']}" for p in r["progress"])
-    return (f"  {r['variant']}{steps_txt}: found {len(g['found'])}/14 ({g['recall']:.0%})  by class {g['by_class']}  false positives {len(g['false_positives'])}"
+    return (f"  {r['variant']}{steps_txt}: found {len(g['found'])}/{g['total']} ({g['recall']:.0%})  by class {g['by_class']}  false positives {len(g['false_positives'])}"
             f"  extra {len(g['extra_blocks'])}  steps {r['steps']}  skills {r['skills_loaded'] or 'none'}")
 
 
@@ -203,10 +230,12 @@ def main(argv=None) -> int:
     ap.add_argument("--model", default="gemini")
     ap.add_argument("--variants", default="A,B,C")
     ap.add_argument("--grade", metavar="FILE", help="grade an existing findings file against the key and exit")
+    ap.add_argument("--fixture", default="seeded_audit", help="evals/<name> holding project/ and key.json")
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--no-shim", action="store_true")
     ap.add_argument("--timeout", type=float, default=1500.0)
     a = ap.parse_args(argv)
+    use_fixture(a.fixture)
     if a.grade:
         print(json.dumps(grade(Path(a.grade).read_text(encoding="utf-8"), load_key()), indent=1))
         return 0

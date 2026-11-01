@@ -1,0 +1,22 @@
+{
+  "note": "HOLDOUT KEY. Different code, same classes. Never copied into a workspace.",
+  "bugs": [
+    {"id": "hardcoded-token", "class": "security", "file": "lib/settings.py", "function": "API_TOKEN", "pattern": "hard.?cod|secret|committed|in the source|environment|env var"},
+    {"id": "weak-hash", "class": "security", "file": "lib/accounts.py", "function": "make_password", "pattern": "sha.?1|unsalted|salt|bcrypt|argon|scrypt|pbkdf|weak|fast hash"},
+    {"id": "session-expiry-units", "class": "security", "file": "lib/accounts.py", "function": "read_session", "pattern": "1000|millisecond|expir|unit|never expire|lifetime"},
+    {"id": "sql-injection", "class": "security", "file": "lib/repo.py", "function": "search_items", "pattern": "inject|format|%s|concatenat|parameter|placeholder"},
+    {"id": "path-traversal", "class": "security", "file": "lib/repo.py", "function": "load_attachment", "pattern": "travers|\\.\\./|outside|arbitrary file|normaliz|realpath|abspath"},
+    {"id": "idor-show-item", "class": "api", "file": "lib/handlers.py", "function": "show_item", "pattern": "idor|owner|authoriz|another user|other user|access control|ownership|user"},
+    {"id": "no-validation-create", "class": "api", "file": "lib/handlers.py", "function": "create_item", "pattern": "validat|negative|qty|price|empty|schema|malformed|missing|keyerror"},
+    {"id": "wrong-status-create", "class": "api", "file": "lib/handlers.py", "function": "create_item", "pattern": "201|created|status code|http status"},
+    {"id": "page-size-off-by-one", "class": "logic", "file": "lib/handlers.py", "function": "list_items", "pattern": "off.?by.?one|page_size \\+ 1|\\+ 1|extra|one more|too many|one item"},
+    {"id": "error-leaks-trace", "class": "api", "file": "lib/handlers.py", "function": "dispatch", "pattern": "traceback|stack trace|leak|disclos|internal|format_exc"},
+    {"id": "total-stored-as-price", "class": "logic", "file": "lib/repo.py", "function": "add_item", "pattern": "total|qty \\* price|multipl|unit price|price is|wrong value|instead of"},
+    {"id": "negative-stock", "class": "logic", "file": "lib/handlers.py", "function": "remove_stock", "pattern": "negative|below zero|< ?0|oversell|check|insufficient|validat"},
+    {"id": "mutable-default-set", "class": "logic", "file": "lib/handlers.py", "function": "tag_list", "pattern": "mutable|default argument|default arg|seen=|shared|persist|between calls"}
+  ],
+  "decoys": [
+    {"id": "get-item-row-parameterized", "function": "get_item_row", "pattern": "inject|sql|parameter|format"},
+    {"id": "same-token-constant-time", "function": "same_token", "pattern": "timing|constant.?time|compare|side.?channel"}
+  ]
+}
