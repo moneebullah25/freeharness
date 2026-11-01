@@ -651,6 +651,8 @@ def main(argv=None) -> int:
     q = sub.add_parser("report", help="timeline, checklist and assessment of a run; writes report.md")
     q.add_argument("run", help="run id, a unique prefix, 'latest', or the run directory")
     q.add_argument("--judge", action="store_true", help="also ask the advisory LLM judge (one message; cannot change the result)")
+    w = sub.add_parser("watch", help="follow a running run live: one line per tool call, stall alert, closing summary")
+    w.add_argument("run", help="run id, a unique prefix, 'latest', or the run directory")
     sub.add_parser("list", help="past runs")
     a = ap.parse_args(argv)
     if a.cmd == "run":
@@ -660,6 +662,13 @@ def main(argv=None) -> int:
         return cmd_run(a, Console())
     if a.cmd == "report":
         return cmd_report(a)
+    if a.cmd == "watch":
+        from . import oss_watch
+        try:
+            return oss_watch.watch(resolve_run(a.run))
+        except OssError as e:
+            print(e, file=sys.stderr)
+            return 2
     return cmd_list()
 
 

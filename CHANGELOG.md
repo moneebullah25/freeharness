@@ -7,6 +7,12 @@ releases may include breaking changes; they will be listed under **Changed**.
 
 ## [Unreleased]
 
+### Added
+- `freeharness oss watch <run|latest>` follows a staged OSS run live (one line per tool call, stage and note lines, an ALERT after 240s of
+  silence), exits when the run's outcome is final or its pid is gone, and prints a summary (tool calls, errors by class, repair turns, models).
+- `freeharness oss report` has a "Run health" section and writes `health.json`: steps per stage, tool errors by class, repair turns, model
+  failovers and cooldown waits, wasted steps and the unmet checks per acceptance round, all derived from the run's existing files.
+
 ### Changed
 - The hunt check `repro_run` needs the run output to show the exception class the `Actual:` line names: a different traceback (a clean
   `ParserMatchError` where the report claims `IndexError`) is a different behaviour and does not show the claim.
