@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- The resume prompt says the dependency venv may be stale and to call `gh_setup_env` again if importing the project fails; models used to
+  search the whole disk for the missing package instead.
 - `gh_setup_env` reads Poetry projects: `[tool.poetry.dependencies]` and the dev/test groups, with `^` and `~` constraints converted. It used
   to build an empty venv for them (ormar), so every repro died on `No module named 'sqlalchemy'`.
 - A Python repro must use the project: a script that never imports a package of the clone (it only raises its own `AssertionError`) no longer

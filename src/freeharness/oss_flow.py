@@ -166,7 +166,9 @@ NO_OTHER_CHALLENGE = ("You said there is no other candidate, but this stage read
                       "reproduces, end with DECISION: no_other_candidate again; otherwise write its candidate section and end "
                       "with STAGE DONE.\n")
 RESUMED = ("The run was interrupted and resumed. Some of this stage may already be done: check your earlier tool results and "
-           "the files before repeating anything.\n")
+           "the files before repeating anything. The dependency venv from before the interruption may be stale or empty: if importing "
+           "the project fails (No module named ...), call gh_setup_env {repo_dir: <the clone>} again (it rebuilds the venv when the "
+           "declared dependencies changed) and use the COMMAND PREFIX it returns, instead of searching the disk.\n")
 
 
 def flow_prompt(repo: str, component: str, live: bool) -> str:
