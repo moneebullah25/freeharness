@@ -166,7 +166,20 @@ def test_grader_falls_back_to_the_text_when_there_is_no_function_line():
 
 
 def test_every_variant_prompt_is_defined_and_only_b_names_all_lenses():
-    assert set(seeded.VARIANTS) == {"A", "B", "C"}
+    assert set(seeded.VARIANTS) == {"A", "B", "C", "D"}
     assert all(s in seeded.VARIANTS["B"] for s in seeded.LENSES)
     assert "agency-api-tester" not in seeded.VARIANTS["A"] and "skill tool" in seeded.VARIANTS["C"]
     assert "key.json" not in "".join(seeded.VARIANTS.values())
+
+
+def test_variant_d_follow_ups_name_a_skill_and_give_no_hint_of_the_bugs():
+    ups = seeded.FOLLOWUPS["D"]
+    assert len(ups) == len(seeded.LENSES) - 1
+    for lens, text in zip(seeded.LENSES[1:], ups, strict=True):
+        assert f"`{lens}`" in text
+    blob = " ".join(ups).lower() + " " + seeded.COMMON.lower()
+    key = seeded.load_key()
+    import re
+    for word in ("sql", "injection", "traversal", "idor", "md5", "pagination", "negative", "float", "mutable", "timing", "201"):
+        assert not re.search(rf"\b{word}\b", blob), word        # whole words: the shared task text says "sqlite"
+    assert all(b["function"].lower() not in blob for b in key["bugs"])

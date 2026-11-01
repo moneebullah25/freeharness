@@ -9,6 +9,8 @@ Three variants measure what the skills add:
   A  only agency-code-reviewer (how the hunt prompt used to work)
   B  the full set of lenses (code reviewer, appsec, penetration tester, API tester, identity, secrets, performance)
   C  no skills at all
+  D  one lens per pass: the A prompt, then one follow-up turn per remaining lens ("load X, review again through it, add NEW findings"),
+     graded after every pass so the gain of each lens shows. The follow-ups name only the skill: no hint of what to look for.
 
     python -m freeharness.eval.seeded --model gemini --variants A,B,C
     python -m freeharness.eval.seeded --grade path/to/findings.md        (grade an existing findings file, no model)
@@ -50,7 +52,14 @@ VARIANTS = {
     "B": ("Before reading any code, load each of these skills with the skill tool and review the code through every one of them: "
           + ", ".join(f"`{s}`" for s in LENSES) + ".\n\n" + COMMON),
     "C": "Do not use the skill tool.\n\n" + COMMON,
+    "D": "Before reading any code, load the skill `agency-code-reviewer` with the skill tool and review through it.\n\n" + COMMON,
 }
+
+FOLLOWUP = """Second look, through a different lens. Load the skill `{skill}` with the skill tool and review the SAME code again, strictly through that
+skill: look for what it treats as important. Append only NEW findings to `findings.md` (same layout, keep numbering on from the last block;
+do not repeat or edit earlier ones). If this lens finds nothing new, append nothing. Say DONE."""
+
+FOLLOWUPS = {"D": [FOLLOWUP.format(skill=s) for s in LENSES[1:]]}
 
 
 # ---------------------------------------------------------------------------------------------- grading (pure)
@@ -133,13 +142,23 @@ def run_variant(variant: str, model: str, timeout: float = 1500.0, keep: bool = 
     try:
         wait_ready(model)
         rt.start()
-        turn = rt.run_turn(f"seeded-{variant}-{int(t0)}", VARIANTS[variant], timeout=timeout)
-        merged = merge_turns([turn])
+        sid = f"seeded-{variant}-{int(t0)}"
+        turns, progress = [], []
+        for i, prompt in enumerate([VARIANTS[variant], *FOLLOWUPS.get(variant, [])]):
+            turns.append(rt.run_turn(sid, prompt, timeout=timeout))
+            f = ws / "findings.md"
+            g = grade(f.read_text(encoding="utf-8", errors="replace") if f.is_file() else "", load_key())
+            progress.append({"turn": i, "lens": "first pass" if i == 0 else LENSES[i], "found": len(g["found"]), "ids": g["found"]})
+            if not turns[-1].ok:
+                break
+        res["progress"] = progress
+        turn = turns[-1]
+        merged = merge_turns(turns)
         names_called = [c[0] for c in merged.tool_calls]
         skills = [str((c[1] or {}).get("name", "")) for c in merged.tool_calls if c[0] == "skill"]
         findings_file = ws / "findings.md"
         findings = findings_file.read_text(encoding="utf-8", errors="replace") if findings_file.is_file() else ""
-        res.update(ok=turn.ok, reason=turn.reason, steps=merged.steps, tool_calls=len(names_called), tool_errors=merged.tool_errors,
+        res.update(ok=all(t.ok for t in turns), reason=turn.reason, steps=merged.steps, tool_calls=len(names_called), tool_errors=merged.tool_errors,
                    skills_loaded=skills, wrote_findings=bool(findings), findings=findings,
                    modified_source=_modified(ws), seconds=round(time.monotonic() - t0, 1))
         res["grade"] = grade(findings, load_key())
@@ -172,7 +191,10 @@ def summary_line(r: dict) -> str:
     if r.get("error") or "grade" not in r:
         return f"  {r['variant']}: ERROR {r.get('error')}"
     g = r["grade"]
-    return (f"  {r['variant']}: found {len(g['found'])}/14 ({g['recall']:.0%})  by class {g['by_class']}  false positives {len(g['false_positives'])}"
+    steps_txt = ""
+    if len(r.get("progress", [])) > 1:
+        steps_txt = "  per pass " + " -> ".join(f"{p['found']}" for p in r["progress"])
+    return (f"  {r['variant']}{steps_txt}: found {len(g['found'])}/14 ({g['recall']:.0%})  by class {g['by_class']}  false positives {len(g['false_positives'])}"
             f"  extra {len(g['extra_blocks'])}  steps {r['steps']}  skills {r['skills_loaded'] or 'none'}")
 
 

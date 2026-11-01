@@ -8,6 +8,9 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Added
+- `python -m freeharness.eval.seeded`: a planted-bug audit (a small orders service with 14 known bugs and 3 decoys; the answer key is never in the
+  model's workspace). Variants: A code reviewer only, B all lenses at once, C no skills, D one lens per pass graded after each pass. First result on
+  Qwen: C 8/14, A 9/14, B 9/14.
 - `freeharness agents install --set audit`: the `oss` skills plus the Agency's API tester, penetration tester, secrets and credential hygiene
   engineer, identity and access engineer, AI-generated-code security auditor and performance benchmarker (16 skills, about 1,060 tokens of
   listing per step). The hunt prompt now has the model load the lenses that fit the component (it used to say "ONE review skill"), and the new
