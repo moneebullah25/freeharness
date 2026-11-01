@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Added
+- One process per run directory: `run.lock` (created exclusively, holds the pid; a dead owner's lock is taken over). A second `oss run
+  --resume` of a live run refuses at once instead of racing the first.
 - Preflight for `freeharness oss run` (and `--resume`): refuses to start when the bash sandbox is not `full`, or when every named model is at its
   new-chat cap; warns on one model at the cap or not signed in. `--no-preflight` skips it. The cap itself is untouched.
 - `gh_setup_env` tries `import <project>` in the sandbox after building the venv and says so loudly when it fails (an environment

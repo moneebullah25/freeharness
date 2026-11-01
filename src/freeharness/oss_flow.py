@@ -30,6 +30,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from string import Template
 
 from . import hunt_hints, loopguard, oss_cmd, paths, sessions
@@ -189,6 +190,43 @@ def _alive(pid) -> bool:
     except (OSError, TypeError, ValueError):
         return False
     return True
+
+
+class RunLocked(RuntimeError):
+    pass
+
+
+def acquire_run_lock(rd: oj.RunDir) -> Path:
+    """One process per run directory. `run.lock` is created exclusively (atomic) and holds the owner's pid; a lock whose owner is
+    gone is taken over. Raises RunLocked when a live process of another pid holds it."""
+    lock = rd.path / "run.lock"
+    for _ in range(2):
+        try:
+            fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            try:
+                pid = int(lock.read_text(encoding="utf-8").strip() or 0)
+            except (OSError, ValueError):
+                pid = 0
+            if pid and pid != os.getpid() and _alive(pid):
+                raise RunLocked(f"{rd.path.name} is already running (pid {pid}): stop it first, two processes on one run would corrupt it") from None
+            try:
+                lock.unlink()
+            except FileNotFoundError:
+                pass
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()) + "\n")
+        return lock
+    raise RunLocked(f"{rd.path.name}: could not take the run lock")
+
+
+def release_run_lock(lock: Path | None) -> None:
+    try:
+        if lock and int(lock.read_text(encoding="utf-8").strip() or 0) == os.getpid():
+            lock.unlink()
+    except (OSError, ValueError):
+        pass
 
 
 def _clip(s, n=300) -> str:
@@ -753,6 +791,12 @@ def execute_flow(rd: oj.RunDir, repo: str, models: list[str], live: bool, max_st
     flow = Flow(rd, state, rt, rec, models, max_steps, turn_timeout, repair, say, info)
     shim, status, outcome = None, "error", ""
     try:
+        lock = acquire_run_lock(rd)
+    except RunLocked as e:
+        say(str(e))
+        rt.close()
+        return 2
+    try:
         if not no_shim:
             shim = rpc.ensure_shim(oss_cmd._provider_list(models, providers), sticky="auto", restart_stale=True)
         try:
@@ -797,6 +841,7 @@ def execute_flow(rd: oj.RunDir, repo: str, models: list[str], live: bool, max_st
         if rec.tr:
             rec.tr.close()
         rt.close()
+        release_run_lock(lock)
         if shim and shim.poll() is None:
             shim.terminate()
             try:

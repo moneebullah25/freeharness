@@ -591,3 +591,27 @@ def test_the_hunt_may_not_modify_the_clone(tmp_path):
     item = st.clean_clone_item(repo)
     assert item["status"] != "pass" and "m.py" in item["evidence"] and "git checkout" in item["evidence"]
     assert st.clean_clone_item(None)["status"] == "pass"
+
+
+# ======================================================================================= one process per run
+
+def test_run_lock_is_exclusive_stale_safe_and_released(tmp_path):
+    import os
+    rd = oj.RunDir(tmp_path / "run")
+    rd.path.mkdir(parents=True)
+    lock = oss_flow.acquire_run_lock(rd)
+    assert lock.read_text().strip() == str(os.getpid())
+    assert oss_flow.acquire_run_lock(rd) == lock                      # the same process may take it again
+    oss_flow.release_run_lock(lock)
+    assert not lock.exists()
+    lock.write_text(f"{os.getppid()}\n")                               # held by another live process (the parent)
+    with pytest.raises(oss_flow.RunLocked, match="already running"):
+        oss_flow.acquire_run_lock(rd)
+    lock.write_text("999999999\n")                                     # its owner is gone: taken over
+    assert oss_flow.acquire_run_lock(rd) == lock and lock.read_text().strip() == str(os.getpid())
+    lock.write_text("not a pid\n")
+    assert oss_flow.acquire_run_lock(rd) == lock
+    other = tmp_path / "other.lock"
+    other.write_text("1\n")
+    oss_flow.release_run_lock(other)                                   # never removes a lock that is not ours
+    assert other.exists()
