@@ -12,6 +12,7 @@ Every `*_item` function returns an oss_judge-style item: {id, title, status: pas
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 from . import oss_judge as oj
@@ -352,6 +353,25 @@ _FIELD_LINE = re.compile(r"(?im)^[\s>*_|-]*\**(?:Issue|Where|What is wrong|Repro
 
 _OUTPUT_START = re.compile(r"(?:Traceback \(most recent call last\)|FAIL(?:ED)?\b|[A-Z]\w*(?:Error|Exception)\b\s*:|AssertionError|"
                            r"panic:|error\[E\d+\]|Segmentation fault|Unhandled)")
+
+
+def clean_clone_item(clone: Path | None) -> dict:
+    """The hunt only reads the clone and runs a script from OUTSIDE it. A modified tracked file means the repro ran on code the
+    model changed (a patch to get past an import, say), which proves nothing about the project and would leak into the diff."""
+    title = "the hunt left the clone's files as they were (a repro runs the project's own code, unmodified)"
+    if not clone or not (Path(clone) / ".git").exists():
+        return _item("clone_untouched", title, PASS, "no clone to check")
+    try:
+        r = subprocess.run(["git", "-C", str(clone), "status", "--porcelain", "--untracked-files=no"], capture_output=True,
+                           text=True, timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError) as e:
+        return _item("clone_untouched", title, PASS, f"git status did not run ({str(e)[:60]})")
+    changed = [ln[3:] for ln in r.stdout.splitlines() if ln.strip()]
+    if not changed:
+        return _item("clone_untouched", title, PASS, "no tracked file changed")
+    return _item("clone_untouched", title, FAIL,
+                 "you changed " + ", ".join(changed[:4]) + " in the clone: undo it (git checkout -- <file>) and never edit the project "
+                 "to make a repro run. Fix the repro instead: gh_setup_env gives a venv where the project imports as it is")
 
 
 def invented_output_item(section: dict | None, calls: list[dict]) -> dict:

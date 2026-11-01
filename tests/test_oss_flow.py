@@ -571,3 +571,23 @@ def test_rejudging_the_last_allowed_candidate_blocks_the_run(tmp_path):
     f = _passed_hunt(make_flow(tmp_path), "all fine\n", cand_no=oss_flow.MAX_CANDIDATES)
     assert f.rejudge_hunt() == "blocked" and f.state["blocked"]["stage"] == "hunt"
     assert f.state["candidate_no"] == oss_flow.MAX_CANDIDATES
+
+
+def test_the_hunt_may_not_modify_the_clone(tmp_path):
+    import subprocess
+    repo = tmp_path / "c"
+    repo.mkdir()
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+           "PATH": __import__("os").environ["PATH"], "HOME": str(tmp_path)}
+    for args in (["init", "-q"], ["config", "commit.gpgsign", "false"]):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, env=env)
+    (repo / "m.py").write_text("x = 1\n")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, env=env)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"], check=True, env=env)
+    assert st.clean_clone_item(repo)["status"] == "pass"
+    (repo / "scratch.txt").write_text("untracked files are fine\n")
+    assert st.clean_clone_item(repo)["status"] == "pass"
+    (repo / "m.py").write_text("x = 2\n")
+    item = st.clean_clone_item(repo)
+    assert item["status"] != "pass" and "m.py" in item["evidence"] and "git checkout" in item["evidence"]
+    assert st.clean_clone_item(None)["status"] == "pass"

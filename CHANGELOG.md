@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- The hunt must leave the clone's tracked files unmodified (new check `clone_untouched`): a model that patched the project's `__init__`
+  to get past an import error would have run its repro on code it had changed.
 - `gh_setup_env` writes a metadata-only dist-info for the project (name and version from upstream's pyproject.toml, no code), so
   `importlib.metadata.version("<project>")` in an `__init__` works although the project is never installed. ormar failed to import without it.
 - The "repro imports the project" check counts only a real `import`/`from` statement, not the words "from <package>" in a docstring or
