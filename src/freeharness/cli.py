@@ -17,6 +17,8 @@ freeharness: a terminal coding agent (DeepSeek Harness) on free web-chat backend
     freeharness agents ...           open-source agent skills: install [--set oss|all] | list | remove
     freeharness oss run|report|list  OSS-contribution evaluation on a real repo (dry-run by default; --live posts after you approve)
     freeharness providers status     per-provider chat budget, cooldown, last error and tool-call record
+    freeharness review oss show RUN  one page with everything to review for an oss run (read-only)
+    freeharness prune --older-than DAYS [--no-dry-run]  delete old oss workspaces/transcripts (dry run by default)
     freeharness version
 """
 from __future__ import annotations
@@ -25,7 +27,7 @@ import sys
 
 from . import __version__
 
-SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "review", "vault", "github", "transcript", "memory", "sessions", "agents", "oss", "toolchain", "providers", "version")
+SUBCOMMANDS = ("setup", "login", "doctor", "serve", "eval", "review", "vault", "github", "transcript", "memory", "sessions", "agents", "oss", "toolchain", "providers", "prune", "version")
 
 
 def main(argv=None) -> int:
@@ -79,6 +81,12 @@ def main(argv=None) -> int:
     if cmd == "eval":
         from .eval.run import main as run
         return run(rest) or 0
+    if cmd == "prune":
+        from .prune_cmd import main as run
+        return run(rest)
+    if cmd == "review" and rest[:2] == ["oss", "show"]:
+        from .review_oss import main as run
+        return run(rest[2:])
     if cmd == "review":
         from .eval.review import main as run
         return run(rest)

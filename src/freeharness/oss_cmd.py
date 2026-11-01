@@ -41,6 +41,7 @@ from .client.approval import TerminalApprover
 from .client.render import describe_call, extract_text, parse_args
 from .eval import oss_judge as oj
 from .mcp.ghgate import REPO_RE, TOKEN_PAT
+from .redact import redact
 from .transcript import Transcript
 
 DEFAULT_MAX_STEPS = 150
@@ -174,7 +175,7 @@ def _scrub(text: str) -> str:
     tok = os.environ.get("GITHUB_TOKEN", "")
     if len(tok) >= 4:
         text = text.replace(tok, "***")
-    return TOKEN_PAT.sub("***", text)
+    return redact(TOKEN_PAT.sub("***", text))
 
 
 def result_status(name: str, text: str, is_error: bool) -> tuple[str, int | None]:
@@ -201,6 +202,8 @@ class Recorder:
 
     def __init__(self, rd: oj.RunDir, transcript: Transcript | None = None, echo=None):
         self.rd, self.tr, self.echo = rd, transcript, echo
+        if transcript is not None:
+            transcript.redact = True                # a run's transcript never keeps a secret or an e-mail address
         self.pending: dict[str, dict] = {}
         self.texts: list[str] = []                  # assistant messages since the caller last cleared it (stage workflow)
         try:                                        # a resumed run keeps counting: the judge orders calls by `n`
