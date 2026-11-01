@@ -500,3 +500,20 @@ def test_a_structural_bug_is_shown_by_actual_lines_the_run_really_printed():
     # the same lines are not evidence when the run printed something else, or when Expected says them too
     assert not st.failure_signal("all fine\n", "", "", exp_b, act_b)[0]
     assert not st.failure_signal(out, "", "", act_b, act_b)[0]
+
+
+def test_a_repro_that_only_raises_its_own_error_is_not_a_repro(tmp_path):
+    (tmp_path / "mylib").mkdir()
+    (tmp_path / "mylib" / "__init__.py").write_text("")
+    assert st.repo_packages(tmp_path) == ["mylib"]
+    sec = {"text": "Expected: works\nActual: AssertionError: FAIL"}
+    fake_script = {"n": 1, "name": "write", "args": {"file_path": "scratch/r.py", "content": "raise AssertionError('FAIL: x')"}}
+    tb = "Traceback (most recent call last):\n  File \"scratch/r.py\", line 1\nAssertionError: FAIL: x\n[exit code: 1]"
+    items, repro = st.find_repro([fake_script, call(2, "python3 scratch/r.py", tb, 1)], sec, tmp_path)
+    ev = {i["id"]: i for i in items}["repro_run"]
+    assert repro is None and ev["status"] != "pass" and "never imports the project" in ev["evidence"]
+    real_script = {"n": 1, "name": "write", "args": {"file_path": "scratch/r.py", "content": "import mylib\nraise AssertionError('FAIL: x')"}}
+    items, repro = st.find_repro([real_script, call(2, "python3 scratch/r.py", tb, 1)], sec, tmp_path)
+    assert repro is not None
+    items, repro = st.find_repro([call(1, "python3 -c 'import mylib; raise AssertionError(\"FAIL\")'", tb, 1)], sec, tmp_path)
+    assert repro is not None

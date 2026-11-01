@@ -224,19 +224,74 @@ def _output_lines(output: str) -> list[str]:
     return [ln.strip() for ln in body.splitlines() if len(ln.strip()) >= 6]
 
 
-def find_repro(stage_calls: list[dict], section: dict | None) -> tuple[list[dict], dict | None]:
+_PYRUN = re.compile(r"^python[0-9.]*\b")
+_SCRIPT = re.compile(r"[\w./-]+\.py\b")
+
+
+def repo_packages(clone) -> list[str]:
+    """Importable top-level names of the clone: packages (a directory with __init__.py) and single modules, at the top and
+    under src/, without tests, docs and the like. [] when it is not a Python project."""
+    if not clone or not Path(clone).is_dir():
+        return []
+    skip = {"tests", "test", "docs", "doc", "scratch", "reports", "examples", "docs_src", "benchmarks", "scripts", "setup", "conftest", "venv"}
+    out: list[str] = []
+    for base in (Path(clone), Path(clone) / "src"):
+        if not base.is_dir():
+            continue
+        for e in sorted(base.iterdir()):
+            n = e.stem if e.is_file() else e.name
+            if n in skip or n.startswith((".", "_")) or not n.isidentifier():
+                continue
+            if (e.is_dir() and (e / "__init__.py").is_file()) or (e.is_file() and e.suffix == ".py"):
+                out.append(n)
+    return out
+
+
+def repro_source(cmd: str, earlier: list[dict]) -> str:
+    """What a repro command runs: the command itself plus the text of every script it names that an earlier `write` call or
+    heredoc created."""
+    text = [cmd]
+    for tok in _SCRIPT.findall(cmd):
+        for c in earlier:
+            args = c.get("args") or {}
+            if oj._is(c, "write") and str(args.get("file_path", "")).endswith(tok.lstrip("./")):
+                text.append(str(args.get("content", "")))
+            elif oj._is(c, "bash") and "<<" in str(args.get("command", "")) and tok in str(args.get("command", "")):
+                text.append(str(args.get("command", "")))
+    return "\n".join(text)
+
+
+def touches_repo(cmd: str, earlier: list[dict], packages: list[str]) -> bool:
+    """Does a Python repro use the project at all (imports one of its packages, or runs one with -m)? A script that only raises
+    its own AssertionError shows a traceback and proves nothing. Not Python, no packages known, or a test runner: True."""
+    if not packages:
+        return True
+    if not re.search(r"(?:^|[\s;&|(/])python[0-9.]*(?=\s)", strip_heredocs(cmd)) or any(r.search(oj.normalize(sg)) for sg, _ in
+                                                                                  oj._segments(strip_heredocs(cmd)) for r in oj._TEST):
+        return True
+    names = "|".join(re.escape(p) for p in packages)
+    src = repro_source(cmd, earlier)
+    return bool(re.search(rf"(?m)(?:^|[;\s\x27\x22(])(?:import|from)\s+(?:{names})\b|-m\s+(?:{names})\b", src))
+
+
+def find_repro(stage_calls: list[dict], section: dict | None, clone=None) -> tuple[list[dict], dict | None]:
     """The stage-2 acceptance items and the repro record: the LAST bash call of the stage that ran code and whose output
     shows a failure by deterministic rules (traceback/error/FAIL text, or the model's stated wrong value)."""
     text = (section or {}).get("text", "")
     expected, actual = field(text, "Expected"), field(text, "Actual")
     exp_block, act_block = field_block(text, "Expected"), field_block(text, "Actual")
     repro, problem, tried = None, "", 0
+    packages = repo_packages(clone)
     for c in reversed([c for c in stage_calls if oj._is(c, "bash") and not c.get("isError")]):
         cmd = (c.get("args") or {}).get("command", "")
         if not is_run_command(cmd):
             continue
         tried += 1
         sig, prob = failure_signal(c.get("text", ""), expected, actual, exp_block, act_block)
+        if sig and not touches_repo(cmd, stage_calls[:stage_calls.index(c)], packages):
+            sig, prob = "", ("the script never imports the project (" + ", ".join(packages[:4]) + "): its failure text comes from the "
+                             "script itself, not from the project's code. Import the project, call the code you claim is wrong "
+                             "and let ITS output show the failure")
         if tried == 1:
             problem = prob                      # only the latest run: an environment error fixed since is no longer the reason
         if sig:

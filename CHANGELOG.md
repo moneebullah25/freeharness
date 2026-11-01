@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- A Python repro must use the project: a script that never imports a package of the clone (it only raises its own `AssertionError`) no longer
+  passes `repro_run`. A free model had written such a script and the run went on to an issue draft for a bug that did not exist.
 - A run may try up to four candidates (was two) before it ends `blocked: duplicate`: on a busy repository the first bugs a model finds
   often have an open PR already.
 - The hunt check `repro_run` also accepts a bug of structure (a wrong parse tree: no error text, no number): a line of the `Actual:`

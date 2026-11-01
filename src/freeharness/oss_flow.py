@@ -441,9 +441,9 @@ class Flow:
         n = self.state["candidate_no"]
         sec = st.candidate_section(rep, n)
         have = _item_candidate(rep, n, sec)
-        items, repro = st.find_repro(self.stage_calls(stage), sec)
-        self._repro = repro
         clone, _ = st.find_clone(self.rd, self.repo)
+        items, repro = st.find_repro(self.stage_calls(stage), sec, clone)
+        self._repro = repro
         extra = st.issue_items(self.stage_calls(stage), sec) if self.from_issues else []
         return ([have] + items + extra + st.contract_items(sec, clone, self.stage_calls(stage))
                 + [st.invented_output_item(sec, self.stage_calls(stage))])
