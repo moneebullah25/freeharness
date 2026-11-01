@@ -355,6 +355,29 @@ _OUTPUT_START = re.compile(r"(?:Traceback \(most recent call last\)|FAIL(?:ED)?\
                            r"panic:|error\[E\d+\]|Segmentation fault|Unhandled)")
 
 
+LENS_SKILLS = ("agency-application-security-engineer", "agency-penetration-tester", "agency-api-tester", "agency-identity-access-engineer",
+               "agency-secrets-credential-hygiene-engineer", "agency-performance-benchmarker", "agency-ai-generated-code-security-auditor")
+
+
+def lens_item(stage_calls: list[dict], installed: set[str]) -> dict:
+    """The hunt loaded at least one specialist review lens (security, API, identity, secrets, load) besides the general code reviewer.
+    Only lenses that are INSTALLED count as an option: with none installed the item is not applicable."""
+    title = "the hunt loaded a specialist review lens (security, API, identity, secrets or load), not only the general code reviewer"
+    options = [x for x in LENS_SKILLS if x in installed]
+    if not options:
+        return _item("lens_skills", title, PASS, "no specialist lens skill is installed (run `freeharness agents install --set audit`)")
+    loaded = []
+    for c in stage_calls:
+        if oj._is(c, "skill"):
+            name = str((c.get("args") or {}).get("name", ""))
+            if name in options and name not in loaded:
+                loaded.append(name)
+    if loaded:
+        return _item("lens_skills", title, PASS, "loaded " + ", ".join(loaded))
+    return _item("lens_skills", title, FAIL, "no lens skill was loaded in this stage: call the skill tool with one of " + ", ".join(options[:6]) +
+                 " that fits this component, then review the code through it")
+
+
 def clean_clone_item(clone: Path | None) -> dict:
     """The hunt only reads the clone and runs a script from OUTSIDE it. A modified tracked file means the repro ran on code the
     model changed (a patch to get past an import, say), which proves nothing about the project and would leak into the diff."""

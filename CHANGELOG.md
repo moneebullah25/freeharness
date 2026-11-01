@@ -8,6 +8,10 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Added
+- `freeharness agents install --set audit`: the `oss` skills plus the Agency's API tester, penetration tester, secrets and credential hygiene
+  engineer, identity and access engineer, AI-generated-code security auditor and performance benchmarker (16 skills, about 1,060 tokens of
+  listing per step). The hunt prompt now has the model load the lenses that fit the component (it used to say "ONE review skill"), and the new
+  hunt check `lens_skills` requires at least one specialist lens to be loaded when one is installed.
 - `gh_setup_env` lists the optional extras a project declares and that were not installed (ormar: `sqlite`, `postgresql`, ...) and says to call it
   again with `extras="name"` when the tests need a driver. ormar's tests need `aiosqlite`; a model tried `pip install` with no network instead.
 - One process per run directory: `run.lock` (created exclusively, holds the pid; a dead owner's lock is taken over). A second `oss run

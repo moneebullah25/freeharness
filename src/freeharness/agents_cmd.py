@@ -53,8 +53,18 @@ OSS_AGENTS = (
     ("git-workflow-master", "branching, commit hygiene, rebase and conflict questions"),
     ("minimal-change-engineer", "keeps a fix to the smallest diff; no scope creep in PRs"),
 )
+# The `audit` set: the `oss` agents plus the Agency personas for finding bugs in backend code (security, APIs, load). Still a
+# handful: the name and description of every skill are re-sent on every model step.
+AUDIT_AGENTS = (
+    ("api-tester", "API contract, status codes, validation, auth and load checks of an HTTP/RPC surface"),
+    ("penetration-tester", "attacker's view: injection, traversal, broken access control, token abuse"),
+    ("secrets-credential-hygiene-engineer", "hardcoded secrets, weak hashing, key and token handling"),
+    ("identity-access-engineer", "sessions, tokens, expiry, authorization on every request"),
+    ("ai-generated-code-security-auditor", "the bugs generated and vibe-coded code tends to have"),
+    ("performance-benchmarker", "limits and exhaustion: unbounded input, pagination, resource use"),
+)
 OWN_SKILLS = ("oss-contribution",)
-SETS = ("oss", "all")
+SETS = ("oss", "audit", "all")
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
@@ -292,7 +302,8 @@ def install(set_name: str = "oss", ref: str = DEFAULT_REF, url: str = REPO_URL, 
               "Its convert.sh/install.sh will run on your machine. Read them first, then re-run with --yes.",
               file=sys.stderr)
         return 2
-    wanted = [PREFIX + slug for slug, _ in OSS_AGENTS] if set_name == "oss" else None
+    roster = {"oss": OSS_AGENTS, "audit": OSS_AGENTS + AUDIT_AGENTS}.get(set_name)
+    wanted = [PREFIX + slug for slug, _ in roster] if roster else None
     old = read_manifest() or {}
     owned_before = set(old.get("installed", [])) | set(old.get("own", []))
 
@@ -318,7 +329,7 @@ def install(set_name: str = "oss", ref: str = DEFAULT_REF, url: str = REPO_URL, 
             raise AgentsError(f"not in this commit of the Agency repo: {', '.join(missing)}")
         cmd = ["scripts/install.sh", "--tool", "dsh", "--no-convert", "--no-interactive",
                "--path", str(skills_dir())]
-        if set_name == "oss":
+        if roster:
             cmd += ["--agent", ",".join(w[len(PREFIX):] for w in wanted)]
         _bash(cmd, repo, env, say)
         absent = [w for w in wanted if not (skills_dir() / w / "SKILL.md").is_file()]
@@ -384,7 +395,8 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     pi = sub.add_parser("install", help="install the open-source Agency skills + the oss-contribution skill")
     pi.add_argument("--set", dest="set_name", choices=SETS, default="oss",
-                    help="oss: a curated handful (default); all: the whole roster (prompt cost, needs --yes)")
+                    help="oss: a curated handful (default); audit: oss + security, API and load testers; "
+                         "all: the whole roster (prompt cost, needs --yes)")
     pi.add_argument("--ref", default=DEFAULT_REF, help="full commit SHA to pin (default: the reviewed one)")
     pi.add_argument("--repo", default=REPO_URL, help="git URL of a mirror (for tests and forks)")
     pi.add_argument("--yes", action="store_true", help="confirm --set all or a non-reviewed --ref")

@@ -73,7 +73,7 @@ Do not look for bugs yet and do not search GitHub.""",
 
     "hunt": """$comp
 $extra
-1. Read the component's code in the clone `$name`. Use the review skill to look for ONE real bug: a file:line and a concrete input that goes wrong.
+1. Pick the review lenses for this component and load them with the skill tool BEFORE reading code: `agency-code-reviewer` always, plus ONE or TWO that fit: `agency-application-security-engineer` or `agency-penetration-tester` (input, SQL, files, auth, tokens), `agency-api-tester` (request handlers, status codes, validation), `agency-identity-access-engineer` (sessions, permissions), `agency-secrets-credential-hygiene-engineer` (keys, passwords, hashing), `agency-performance-benchmarker` (limits, pagination, unbounded input). Read the component's code in the clone `$name` through those lenses to find ONE real bug: a file:line and a concrete input that goes wrong.
 2. REPRODUCE it. Call gh_setup_env {repo_dir: "$name"} (it returns a COMMAND PREFIX), write a throwaway script OUTSIDE the clone (`scratch/repro$cand.py` in your working directory) and run it with bash: `cd $name && <prefix> python ../scratch/repro$cand.py`. Its output must show the failure (a traceback or a wrong value).
 3. Write `reports/${name}_issues.md` (NOT inside the clone), layout in the oss-contribution skill (references/issues-file-template.md). $report_how Give the candidate section the lines `Where:` (file:line), `What is wrong:`, `Reproduce:` (the exact command), `Expected:`, `Actual:`, `Documented:` (where the project itself says what should happen: a file in the clone with :line, such as a docstring, a type annotation, an existing test or a docs page, or a URL), `Quote:` (the exact words from there that you rely on, copied character for character), `Intent checked:` (a file in the clone whose comments, docstring or tests you read to see whether this behaviour is deliberate, and what they say) and `Valid input because:` (one sentence: why this call is a supported one), and paste the REAL output of the repro run under it.
 A bug is a supported call that gives a wrong result. Passing something the signature, the type annotations or the docs do not allow is misuse, not a bug: do not report it. If you cannot find such a bug in this component, say so and move to another file.
@@ -182,6 +182,14 @@ def flow_prompt(repo: str, component: str, live: bool) -> str:
             + "\n".join(f"{i}. {s.id}: {s.title} (max {s.max_repair} repair turns, {s.steps} steps per turn)"
                         for i, s in enumerate(STAGES, 1))
             + "\nState is checkpointed in state.json; `freeharness oss run --resume <run-id>` continues at the first unfinished stage.\n")
+
+
+def installed_skills() -> set[str]:
+    """Names of the skills in the dsh home (one directory each)."""
+    try:
+        return {p.name for p in (paths.dsh_home() / "skills").iterdir() if (p / "SKILL.md").is_file()}
+    except OSError:
+        return set()
 
 
 def _alive(pid) -> bool:
@@ -487,7 +495,7 @@ class Flow:
         items, repro = st.find_repro(self.stage_calls(stage), sec, clone)
         self._repro = repro
         extra = st.issue_items(self.stage_calls(stage), sec) if self.from_issues else []
-        return ([have] + items + [st.clean_clone_item(clone)] + extra + st.contract_items(sec, clone, self.stage_calls(stage))
+        return ([have] + items + [st.clean_clone_item(clone), st.lens_item(self.stage_calls(stage), installed_skills())] + extra + st.contract_items(sec, clone, self.stage_calls(stage))
                 + [st.invented_output_item(sec, self.stage_calls(stage))])
 
     def check_dupcheck(self, stage: Stage) -> list[dict]:

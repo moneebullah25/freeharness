@@ -615,3 +615,15 @@ def test_run_lock_is_exclusive_stale_safe_and_released(tmp_path):
     other.write_text("1\n")
     oss_flow.release_run_lock(other)                                   # never removes a lock that is not ours
     assert other.exists()
+
+
+def test_the_hunt_must_load_a_specialist_lens_when_one_is_installed():
+    skill = lambda n, name: {"n": n, "name": "skill", "args": {"name": name}, "text": "ok", "isError": False}
+    installed = {"agency-code-reviewer", "agency-api-tester", "agency-penetration-tester"}
+    only_general = [skill(1, "oss-contribution"), skill(2, "agency-code-reviewer")]
+    item = st.lens_item(only_general, installed)
+    assert item["status"] == "fail" and "agency-api-tester" in item["evidence"] and "agency-penetration-tester" in item["evidence"]
+    ok = st.lens_item(only_general + [skill(3, "agency-api-tester")], installed)
+    assert ok["status"] == "pass" and "agency-api-tester" in ok["evidence"]
+    assert st.lens_item(only_general, {"agency-code-reviewer"})["status"] == "pass"         # no lens installed: not applicable
+    assert st.lens_item([skill(1, "agency-secrets-credential-hygiene-engineer")], {"agency-secrets-credential-hygiene-engineer"})["status"] == "pass"
