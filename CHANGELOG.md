@@ -7,6 +7,18 @@ releases may include breaking changes; they will be listed under **Changed**.
 
 ## [Unreleased]
 
+### Added
+- `freeharness providers status`: per provider, new chats used this hour of the cap, cooldown left, last error class, whether it
+  recently Stalled, and its tool-call record (replies with a tool call vs nudged/Stalled). The shim keeps these in
+  `provider_health.json` (atomic writes) beside `chats.json` and `limits.json`.
+- On failover with the order `auto`, the shim tries the provider with the better recent tool-call record first (after the first
+  choice); an explicit `--models` order is never changed.
+
+### Fixed
+- A site's error page ("I encountered an error doing what you asked", "I'm having a hard time fulfilling your request") on a small
+  fresh prompt is now a `provider_error`, not `too_long`: it no longer writes a bogus `suspect_max_chars` to `limits.json`, and the
+  final error no longer claims "every provider says the prompt/chat is too long".
+
 ### Changed
 - The hunt check `repro_run` needs the run output to show the exception class the `Actual:` line names: a different traceback (a clean
   `ParserMatchError` where the report claims `IndexError`) is a different behaviour and does not show the claim.
