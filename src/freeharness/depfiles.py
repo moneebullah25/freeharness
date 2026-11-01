@@ -334,6 +334,24 @@ def _poetry_reqs(table: dict, col: Collected, extras_on: set[str] | None = None,
         col.add(f"{name}{extras}{_poetry_spec(ver)}{marker}")
 
 
+def project_identity(text: str) -> tuple[str, str]:
+    """(name, version) a pyproject.toml declares, for the metadata stub that lets `importlib.metadata.version(name)` work without
+    installing the project. ('', '') when there is no usable static name; the version falls back to 0.0.0+freeharness."""
+    try:
+        data = load_toml(text or "")
+    except ValueError:
+        return "", ""
+    proj = data.get("project") if isinstance(data.get("project"), dict) else {}
+    poetry = (data.get("tool") or {}).get("poetry") if isinstance((data.get("tool") or {}).get("poetry"), dict) else {}
+    name = str(proj.get("name") or poetry.get("name") or "")
+    ver = str(proj.get("version") or poetry.get("version") or "")
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?", name):
+        return "", ""
+    if not re.fullmatch(r"[0-9][0-9A-Za-z.+!_-]{0,40}", ver):
+        ver = "0.0.0+freeharness"
+    return name, ver
+
+
 def _from_pyproject(col: Collected, text: str, extras: set[str]) -> None:
     try:
         data = load_toml(text)

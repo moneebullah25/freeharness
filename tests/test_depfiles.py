@@ -194,3 +194,15 @@ mkdocs = "^1.5"
     assert any("mylocal" in x for x in col.skipped)
     col = d.collect(["pyproject.toml"], [], rd, {"sqlite"})
     assert "aiosqlite>=0.19,<0.23" in col.reqs and not col.notes
+
+
+@pytest.mark.parametrize("toml,want", [
+    ('[project]\nname = "ormar"\nversion = "0.26.0"\n', ("ormar", "0.26.0")),
+    ('[tool.poetry]\nname = "p_q"\nversion = "1.2"\n', ("p_q", "1.2")),
+    ('[project]\nname = "x"\ndynamic = ["version"]\n', ("x", "0.0.0+freeharness")),      # a dynamic version gets a placeholder
+    ('[project]\nname = "../evil"\nversion = "1"\n', ("", "")),                          # a name that is not a plain distribution name
+    ('[project]\nname = "x"\nversion = "1; rm -rf /"\n', ("x", "0.0.0+freeharness")),
+    ("not toml [[", ("", "")),
+])
+def test_project_identity_for_the_metadata_stub(toml, want):
+    assert d.project_identity(toml) == want

@@ -8,6 +8,8 @@ releases may include breaking changes; they will be listed under **Changed**.
 ## [Unreleased]
 
 ### Changed
+- `gh_setup_env` writes a metadata-only dist-info for the project (name and version from upstream's pyproject.toml, no code), so
+  `importlib.metadata.version("<project>")` in an `__init__` works although the project is never installed. ormar failed to import without it.
 - The "repro imports the project" check counts only a real `import`/`from` statement, not the words "from <package>" in a docstring or
   comment: a script that copied the project's function verbatim passed it by its own comment.
 - The resume prompt says the dependency venv may be stale and to call `gh_setup_env` again if importing the project fails; models used to

@@ -837,6 +837,28 @@ class Gate:
         return (f"note: {rel} is generated at build time (setuptools-scm) and is not in the clone; wrote a placeholder "
                 "(0.0.0+freeharness) so `import` works. It is gitignored: it is not part of your diff.")
 
+    def _dist_info_stub(self, venv: Path, rd: Path, ref: str) -> str:
+        """The project is never installed, so `importlib.metadata.version("<project>")` (many __init__ files call it) raises. Write
+        a metadata-only dist-info (Name and Version from upstream's pyproject.toml, no files, no entry points) into the venv."""
+        name, ver = depfiles.project_identity(self._tree_reader(rd, ref)("pyproject.toml") or "")
+        if not name:
+            return ""
+        sp = next(iter(sorted((venv / "lib").glob("python3*/site-packages"))), None)
+        if sp is None or not sp.is_dir():
+            return ""
+        di = sp / f"{depfiles.norm(name).replace('-', '_')}-{ver}.dist-info"
+        try:
+            if any(sp.glob(f"{depfiles.norm(name).replace('-', '_')}-*.dist-info")):
+                return ""
+            di.mkdir()
+            (di / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {name}\nVersion: {ver}\n", encoding="utf-8")
+            (di / "INSTALLER").write_text("freeharness\n", encoding="utf-8")
+        except OSError:
+            return ""
+        self._log("dist_info_stub", repo_dir=str(rd), name=name, version=ver)
+        return (f"note: wrote a metadata stub so importlib.metadata.version({name!r}) works ({ver}); the project's code itself is still "
+                "imported from PYTHONPATH, not installed.")
+
     def _extras(self, extras) -> set[str]:
         if not isinstance(extras, str):
             raise Refuse("extras must be text: names separated by commas, for example 'test,lint'")
@@ -975,6 +997,7 @@ class Gate:
             envs[str(venv)] = fp
             self._store("envs.json", envs)
         placeholder = self._scm_placeholder(rd, col, ref)
+        stub = self._dist_info_stub(venv, rd, ref)
         py = str(venv / "bin" / "python")
         # does it work where the agent will use it? the same sandbox its bash tool runs in
         probe = (f"{shlex.quote(py)} -c 'import sys; print(\"python\", sys.version.split()[0])' && "
@@ -998,6 +1021,8 @@ class Gate:
             lines.append(f"python in the sandbox: {py} ({out.splitlines()[0]}); `python` and `python3` also resolve there")
         if placeholder:
             lines.append(placeholder)
+        if stub:
+            lines.append(stub)
         lines.append("tools that run here: " + (", ".join(usable) or "none") +
                      ("" if usable else "  (none declared by the repo and no standard toolchain: python -m unittest still works)"))
         if tstat != "full":
